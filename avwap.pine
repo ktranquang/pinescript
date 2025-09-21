@@ -1,4 +1,3 @@
-// TO DO: intraday SMA or EMAs, AVWAP labels.
 //@version=5
 indicator(title="Multi VWAP & Alpha 5DMA", shorttitle="VWAP+Alpha", overlay=true, max_bars_back=5000, max_boxes_count=20, max_labels_count=50, max_lines_count=500)
 
@@ -13,10 +12,28 @@ isStock = not isCrypto and not isFutures
 isDaily = timeframe.isdaily
 isIntraday = timeframe.period != "D" and timeframe.period != "W" and timeframe.period != "M"
 
-// Initialize holidays array for traditional markets
+// // Initialize holidays array for traditional markets
+// var int[] holidays = array.new_int(0)
+// if not isCrypto
+//     holidays := MarketHolidays.getHolidays(syminfo.country)
+
+// AUTOMATIC HOLIDAY INITIALIZATION (replaces existing)
 var int[] holidays = array.new_int(0)
-if not isCrypto
-    holidays := MarketHolidays.getHolidays(syminfo.country)
+getMarketHolidays() =>
+    var int[] marketHolidays = array.new_int(0)
+    if isStock
+        // Automatic for stocks via library (no manual list needed)
+        marketHolidays := MarketHolidays.getHolidays(syminfo.country)
+    else if isFutures
+        // Automatic for futures (use library for exchange-tied holidays; fallback to US if not specific)
+        marketHolidays := MarketHolidays.getHolidays("US")  // CME uses US holidays; customize for other exchanges
+    else if isCrypto
+        // No holidays for crypto (24/7); empty array
+        marketHolidays := array.new_int(0)
+    marketHolidays
+
+// Initialize holidays automatically (runs once, updates if needed)
+holidays := getMarketHolidays()
 
 // INPUTS: VWAP
 dataSrcInput = input.string(title="Source", options=["ohlc4", "open", "high", "low", "close", "hl2", "hlc3", "hlcc4"], defval="ohlc4", group="---AVWAP [ALL]---")
@@ -92,18 +109,13 @@ show_ma2_intraday = input.bool(false, "MA 2", group="---MOVING AVERAGES [DAILY]-
 show_ma3_intraday = input.bool(false, "MA 3", group="---MOVING AVERAGES [DAILY]---", inline="Row5")
 
 // Row 6: Extreme Smoothing Controls
-auto_smooth = input.bool(true, "Enable Auto-Smoothing", group="Extreme Smoothing", tooltip="Automatically smooth MAs based on length and timeframe")
+auto_smooth = input.bool(true, "Enable Auto-Smoothing", group="---MOVING AVERAGES [DAILY]---", tooltip="Automatically smooth MAs based on length and timeframe")
 
-// Individual smoothing intensity for each MA with expanded range
-smooth_intensity_ma1 = input.float(1.0, "MA1 Smoothing", minval=0.1, maxval=25.0, step=0.1, group="Extreme Smoothing", tooltip="0.1=Minimal, 25=Extreme smoothing for MA1")
-smooth_intensity_ma2 = input.float(2.0, "MA2 Smoothing", minval=0.1, maxval=25.0, step=0.1, group="Extreme Smoothing", tooltip="0.1=Minimal, 25=Extreme smoothing for MA2")
-smooth_intensity_ma3 = input.float(3.0, "MA3 Smoothing", minval=0.1, maxval=25.0, step=0.1, group="Extreme Smoothing", tooltip="0.1=Minimal, 25=Extreme smoothing for MA3")
-
-// Advanced smoothing options
-smooth_type = input.string("EMA", "Primary Smoothing", options=["EMA", "SMA", "WMA", "HMA", "VWMA", "DEMA", "TEMA"], group="Extreme Smoothing")
-secondary_smooth = input.bool(false, "Apply Secondary Smoothing", group="Extreme Smoothing", tooltip="Apply a second layer of smoothing")
-secondary_smooth_type = input.string("EMA", "Secondary Smoothing", options=["EMA", "SMA", "WMA"], group="Extreme Smoothing")
-secondary_intensity = input.float(0.5, "Secondary Intensity", minval=0.1, maxval=5.0, step=0.1, group="Extreme Smoothing")
+// // Individual smoothing intensity for each MA with expanded range
+// smooth_intensity_ma1 = input.float(1.0, "MA1 Smoothing", minval=0.1, maxval=25.0, step=0.1, group="---MOVING AVERAGES [DAILY]---", tooltip="0.1=Minimal, 25=Extreme smoothing for MA1")
+// smooth_intensity_ma2 = input.float(2.0, "MA2 Smoothing", minval=0.1, maxval=25.0, step=0.1, group="---MOVING AVERAGES [DAILY]---", tooltip="0.1=Minimal, 25=Extreme smoothing for MA2")
+// smooth_intensity_ma3 = input.float(3.0, "MA3 Smoothing", minval=0.1, maxval=25.0, step=0.1, group="---MOVING AVERAGES [DAILY]---", tooltip="0.1=Minimal, 25=Extreme smoothing for MA3")
+smooth_type = input.string("SMA", "Smoothing Type", options=["EMA", "SMA", "WMA", "HMA", "VWMA", "DEMA", "TEMA"], group="---MOVING AVERAGES [DAILY]---")
 
 // Row 7: Anticipation Lines (Vertical Lines)
 show_intraday5DMA = input.bool(true, "Intraday 5-Day MA", group="---VERTICAL LINES [INTRADAY & DAILY]---", tooltip="Shows where MA calculations begin")
@@ -276,6 +288,7 @@ getNthTradingDay(nTradingDays) =>
         else
             na
 
+
 getStartOfWeekTimestamp() =>
     if isCrypto
         currentTime = timenow
@@ -372,6 +385,8 @@ customTimeBarIndex(_ts) =>
             labelBarIndex := bar_index
     labelBarIndex
 
+
+
 // FUNCTIONS: 5DMA, HIGHS/LOWS, PIVOTS
 get_5dma_period() =>
     if timeframe.isdaily
@@ -387,9 +402,19 @@ get_5dma_period() =>
         else
             minutes_per_trading_day := 6.5 * 60
         total_minutes_5_days = 5 * minutes_per_trading_day
-        timeframe_minutes = timeframe.multiplier * (timeframe.period == "D" ? 1440 :timeframe.period == "W" ? 10080 :timeframe.period == "M" ? 43200 :timeframe.period == "H" ? 60 :timeframe.period == "m" ? 1 : 1)
+        timeframe_minutes = timeframe.multiplier * (timeframe.period == "D" ? 1440 : timeframe.period == "W" ? 10080 : timeframe.period == "M" ? 43200 : timeframe.period == "H" ? 60 : timeframe.period == "m" ? 1 : 1)
         period = total_minutes_5_days / timeframe_minutes
-        math.min(5000, math.max(1, math.round(period)))
+        // Adjust for trading days
+        if isCrypto
+            math.min(5000, math.max(1, math.round(period)))
+        else
+            // Use getNthTradingDay to find the start of the 5th trading day
+            start_timestamp = getNthTradingDay(5)
+            if not na(start_timestamp)
+                bars_since_start = math.round((time - start_timestamp) / (timeframe_minutes * 60 * 1000))
+                math.min(5000, math.max(1, bars_since_start))
+            else
+                math.min(5000, math.max(1, math.round(period)))
 
 pixelsToPrice(pixels) =>
     visibleHigh = ta.highest(high, 100)
@@ -534,6 +559,8 @@ if isMA3Start and not na(ma3StartBarIndex) and dailyMA3 and not isIntraday
         line.delete(ma3StartLine)
     ma3StartLine := line.new(x1=ma3StartBarIndex, y1=low,x2=ma3StartBarIndex, y2=high,xloc=xloc.bar_index, color=ma3_color, style=lineStyleVal, width=verticalLineWidth)
     line.set_extend(ma3StartLine, extend.both)
+
+
 // LOGIC: DAILY HIGHS & LOWS
 var float PriorHigh = na
 var float PriorLow = na
@@ -917,8 +944,7 @@ is_intraday = timeframe.period != "D" and timeframe.period != "W" and timeframe.
 get_timeframe_minutes() =>
     timeframe_multiplier = timeframe.multiplier
     timeframe_period = timeframe.period
-    timeframe_period == "D" ? 1440 * timeframe_multiplier :timeframe_period == "H" ? 60 * timeframe_multiplier :timeframe_period == "m" ? 1 * timeframe_multiplier : 1
-
+    timeframe_period == "D" ? 1440 * timeframe_multiplier :timeframe_period == "W" ? 10080 * timeframe_multiplier :timeframe_period == "M" ? 43200 * timeframe_multiplier :timeframe_period == "H" ? 60 * timeframe_multiplier :timeframe_period == "m" ? 1 * timeframe_multiplier : 1
 timeframe_minutes = get_timeframe_minutes()
 
 // Calculate intraday multiplier 
@@ -930,29 +956,46 @@ ma2_intraday_period = math.min(5000, is_intraday ? math.round(ma2_length * intra
 ma3_intraday_period = math.min(5000, is_intraday ? math.round(ma3_length * intraday_multiplier) : ma3_length)
 ma5_intraday_period = math.min(5000, is_intraday ? math.round(5 * intraday_multiplier) : 5)
 
-// Calculate daily moving averages
-ma1_daily = request.security(syminfo.tickerid, "D", ma1_type == "SMA" ? ta.sma(ma_source, ma1_length) : ta.ema(ma_source, ma1_length), lookahead=barmerge.lookahead_on)
-ma2_daily = request.security(syminfo.tickerid, "D", ma2_type == "SMA" ? ta.sma(ma_source, ma2_length) : ta.ema(ma_source, ma2_length), lookahead=barmerge.lookahead_on)
-ma3_daily = request.security(syminfo.tickerid, "D", ma3_type == "SMA" ? ta.sma(ma_source, ma3_length) : ta.ema(ma_source, ma3_length), lookahead=barmerge.lookahead_on)
-ma5_daily = request.security(syminfo.tickerid, "D", ta.sma(ma_source, 5), lookahead=barmerge.lookahead_on)
+
+// Calculate daily MAs with holiday gaps handled (gaps=barmerge.gaps_off skips non-trading bars)
+ma1_daily = request.security(syminfo.tickerid, "D", ma1_type == "SMA" ? ta.sma(ma_source, ma1_length) : ta.ema(ma_source, ma1_length), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+ma2_daily = request.security(syminfo.tickerid, "D", ma2_type == "SMA" ? ta.sma(ma_source, ma2_length) : ta.ema(ma_source, ma2_length), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+ma3_daily = request.security(syminfo.tickerid, "D", ma3_type == "SMA" ? ta.sma(ma_source, ma3_length) : ta.ema(ma_source, ma3_length), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+ma5_daily = request.security(syminfo.tickerid, "D", ta.sma(ma_source, 5), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
 
 // Calculate adaptive smoothing
 calculate_smoothing_length(ma_length, intensity) =>
-    base_factor = math.log(ma_length + 5) / 1.5
-    timeframe_factor = is_intraday ? math.max(1, math.log(timeframe_minutes + 5) / 2) : 1
-    intensity_factor = math.pow(intensity, 1.5)
+    base_factor = math.log(ma_length + 15) / 1.5
+    timeframe_factor = is_intraday ? math.max(1, math.log(timeframe_minutes + 15) / 1) : 1
+    intensity_factor = math.pow(intensity, 3)
     smoothing_length = math.max(2, math.round(base_factor * timeframe_factor * intensity_factor))
-    int(math.min(100, smoothing_length))
+    int(math.min(500, smoothing_length))
+
+smooth_intensity_ma1 = 25
+smooth_intensity_ma2 = 25
+smooth_intensity_ma3 = 25
 
 smooth_length_ma1 = calculate_smoothing_length(ma1_length, smooth_intensity_ma1)
 smooth_length_ma2 = calculate_smoothing_length(ma2_length, smooth_intensity_ma2)
 smooth_length_ma3 = calculate_smoothing_length(ma3_length, smooth_intensity_ma3)
 
-// Apply smoothing
-safe_smooth(value, length) => length >= 2 and length <= 100 ? ta.ema(value, length) : value
-ma1_smoothed = auto_smooth and is_intraday ? safe_smooth(ma1_daily, smooth_length_ma1) : ma1_daily
-ma2_smoothed = auto_smooth and is_intraday ? safe_smooth(ma2_daily, smooth_length_ma2) : ma2_daily
-ma3_smoothed = auto_smooth and is_intraday ? safe_smooth(ma3_daily, smooth_length_ma3) : ma3_daily
+// FUNCTION: Smoothing (Updated for Higher Max Length)
+safe_smooth(value, length, smooth_type) =>
+    switch smooth_type
+        "EMA" => length >= 2 and length <= 500 ? ta.ema(value, length) : value
+        "SMA" => length >= 2 and length <= 500 ? ta.sma(value, length) : value
+        "WMA" => length >= 2 and length <= 500 ? ta.wma(value, length) : value
+        "HMA" => length >= 2 and length <= 500 ? ta.hma(value, length) : value
+        "VWMA" => length >= 2 and length <= 500 ? ta.vwma(value, length) : value
+        "DEMA" => length >= 2 and length <= 500 ? 2 * ta.ema(value, length) - ta.ema(ta.ema(value, length), length) : value
+        "TEMA" => length >= 2 and length <= 500 ? 3 * (ta.ema(value, length) - ta.ema(ta.ema(value, length), length)) + ta.ema(ta.ema(ta.ema(value, length), length), length) : value
+        => value
+
+
+
+ma1_smoothed = auto_smooth and is_intraday ? safe_smooth(ma1_daily, smooth_length_ma1, smooth_type) : ma1_daily
+ma2_smoothed = auto_smooth and is_intraday ? safe_smooth(ma2_daily, smooth_length_ma2, smooth_type) : ma2_daily
+ma3_smoothed = auto_smooth and is_intraday ? safe_smooth(ma3_daily, smooth_length_ma3, smooth_type) : ma3_daily
 
 // Check if periods are too large
 period_too_large = ma1_intraday_period > 5000 or ma2_intraday_period > 5000 or ma3_intraday_period > 5000
@@ -1210,4 +1253,3 @@ if barstate.islast and not isIntraday and showAVWAPDaily
     table.cell(dailyStatsTable, 3, 3, str.tostring((close - nz(ytdLowVWAP, close)) / nz(ytdLowVWAP, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white)
     if matchAVWAPColor
         table.cell(dailyStatsTable, 0, 3, "YTD Low", bgcolor=colorYTDLow, text_color=color.white)
-// ... (keep all existing code below the stats table section) ...
