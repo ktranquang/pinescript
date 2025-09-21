@@ -1,10 +1,7 @@
-// TO DO: Optimize code
-// Vertical lines done.
-
+// TO DO: intraday SMA or EMAs, AVWAP labels.
 //@version=5
 indicator(title="Multi VWAP & Alpha 5DMA", shorttitle="VWAP+Alpha", overlay=true, max_bars_back=5000, max_boxes_count=20, max_labels_count=50, max_lines_count=500)
 
-// © MWRIGHT, INC. (Mozilla Public License 2.0)
 
 // IMPORTS
 import Protervus/MarketHolidays/1
@@ -611,10 +608,10 @@ lWidth = i_showThinLines ? 1 : lineWidthAll
 plot(showOneDay and not i_useCurrentVWAP and isIntraday ? dailyVWAP : na, title="Daily VWAP", color=colorOneDay, linewidth=lWidth)
 plot(showWTD and not i_useCurrentVWAP and isIntraday ? weeklyVWAP : na, title="Weekly VWAP", color=colorWTD, linewidth=lWidth)
 plot(showMTD and not i_useCurrentVWAP and isIntraday ? monthlyVWAP : na, title="Monthly VWAP", color=colorMTD, linewidth=lWidth)
-plot(showYTD and not i_useCurrentVWAP ? yearlyVWAP : na, title="YTD VWAP", color=colorYTD, linewidth=lWidth)
+plot(showYTD and not i_useCurrentVWAP and not isIntraday ? yearlyVWAP : na, title="YTD VWAP", color=colorYTD, linewidth=lWidth)
 plot(showWTD and i_useCurrentVWAP and isIntraday ? wtdVWAP : na, title="WTD AVWAP", color=colorWTD, linewidth=lWidth)
 plot(showMTD and i_useCurrentVWAP and isIntraday ? mtdVWAP : na, title="MTD AVWAP", color=colorMTD, linewidth=lWidth)
-plot(showYTD and i_useCurrentVWAP ? ytdVWAP : na, title="YTD AVWAP", color=colorYTD, linewidth=lWidth)
+plot(showYTD and i_useCurrentVWAP and not isIntraday ? ytdVWAP : na, title="YTD AVWAP", color=colorYTD, linewidth=lWidth)
 plot(showTwoDay and isIntraday ? twoDayVWAP_value : na, title="2 Day AVWAP", color=colorTwoDay, linewidth=lWidth)
 plot(showOneDay and isIntraday ? oneDayVWAP_value : na, title="1 Day AVWAP", color=colorOneDay, linewidth=lWidth)
 // plot(i_useCustomDate ? customVWAP : na, title="Custom Date AVWAP", color=color.new(color.gray, 0), linewidth=lWidth)
@@ -683,7 +680,7 @@ if showAVWAPAfterLastBar and barstate.islast
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
     
     // YTD VWAP Label
-    if showYTD and not na(ytdVWAP)
+    if showYTD and not na(ytdVWAP) and not isIntraday
         label.new(rightEdge + xOffset, ytdVWAP, str.tostring(ytdVWAP, "#.##"), 
                  color=na, textcolor=colorYTD, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
@@ -706,11 +703,11 @@ ma_for_fill = showFill ? ma5 : na
 price_plot = plot(close, color=color.new(color.white, 100), title="Price")
 ma_fill_plot = plot(ma_for_fill, color=color.new(color.white, 100), title="MA for Fill")
 fillColor = if showFill
-    if is_indecision
+    if is_indecision and isIntraday
         color.new(indecisionFillColor, 85)
-    else if close > ma5
+    else if close > ma5 and isIntraday
         color.new(upColor, 85)
-    else
+    else if isIntraday
         color.new(downColor, 85)
 else
     na
