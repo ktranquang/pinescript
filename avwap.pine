@@ -1,9 +1,10 @@
-// TO DO:
-// Labels for AVWAP
-// Anticipation lines
+// TO DO: Optimize code
+// Vertical lines done.
 
 //@version=5
 indicator(title="Multi VWAP & Alpha 5DMA", shorttitle="VWAP+Alpha", overlay=true, max_bars_back=5000, max_boxes_count=20, max_labels_count=50, max_lines_count=500)
+
+// © MWRIGHT, INC. (Mozilla Public License 2.0)
 
 // IMPORTS
 import Protervus/MarketHolidays/1
@@ -67,19 +68,19 @@ indecisionColor = input.color(#FFFFC5, "Indecision Color", group="---5-DAY MOVIN
 indecisionFillColor = input.color(color.rgb(209, 209, 209), "Indecision Fill", group="---5-DAY MOVING AVERAGE [INTRADAY]---", inline="row3")
 
 //INPUTS: MOVING AVERAGES 
-ma1_show = input.bool(true, "Daily MA 1", group="---MOVING AVERAGES [DAILY]---", inline="Row1")
+ma1_show = input.bool(false, "Daily MA 1", group="---MOVING AVERAGES [DAILY]---", inline="Row1")
 ma1_length = input.int(10, "", minval=1, group="---MOVING AVERAGES [DAILY]---", inline="Row1")
 ma1_type = input.string("SMA", "", options=["SMA", "EMA"], group="---MOVING AVERAGES [DAILY]---", inline="Row1")
 ma1_color = input.color(color.rgb(44, 163, 193),"", group="---MOVING AVERAGES [DAILY]---", inline="Row1")
 
 // Row 2: MA2 Settings
-ma2_show = input.bool(true, "Daily MA 2", group="---MOVING AVERAGES [DAILY]---", inline="Row2")
+ma2_show = input.bool(false, "Daily MA 2", group="---MOVING AVERAGES [DAILY]---", inline="Row2")
 ma2_length = input.int(20, "", minval=1, group="---MOVING AVERAGES [DAILY]---", inline="Row2")
 ma2_type = input.string("SMA", "", options=["SMA", "EMA"], group="---MOVING AVERAGES [DAILY]---", inline="Row2")
 ma2_color = input.color(color.green, "", group="---MOVING AVERAGES [DAILY]---", inline="Row2")
 
 // Row 3: MA3 Settings
-ma3_show = input.bool(true, "Daily MA 3", group="---MOVING AVERAGES [DAILY]---", inline="Row3")
+ma3_show = input.bool(false, "Daily MA 3", group="---MOVING AVERAGES [DAILY]---", inline="Row3")
 ma3_length = input.int(50, "", minval=1, group="---MOVING AVERAGES [DAILY]---", inline="Row3")
 ma3_type = input.string("SMA", "", options=["SMA", "EMA"], group="---MOVING AVERAGES [DAILY]---", inline="Row3")
 ma3_color = input.color(color.rgb(143, 4, 4), "", group="---MOVING AVERAGES [DAILY]---", inline="Row3")
@@ -108,12 +109,12 @@ secondary_smooth_type = input.string("EMA", "Secondary Smoothing", options=["EMA
 secondary_intensity = input.float(0.5, "Secondary Intensity", minval=0.1, maxval=5.0, step=0.1, group="Extreme Smoothing")
 
 // Row 7: Anticipation Lines (Vertical Lines)
-show_anticipation_lines = input.bool(true, "Show Anticipation Lines", group="Anticipation Lines", tooltip="Shows where MA calculations begin")
-al_ma1_color = input.color(color.new(color.red, 50), "MA1 Line Color", group="Anticipation Lines")
-al_ma2_color = input.color(color.new(color.blue, 50), "MA2 Line Color", group="Anticipation Lines") 
-al_ma3_color = input.color(color.new(color.green, 50), "MA3 Line Color", group="Anticipation Lines")
-al_ma5_color = input.color(color.new(color.yellow, 50), "5-Day MA Line Color", group="Anticipation Lines")
-
+show_intraday5DMA = input.bool(true, "Intraday 5-Day MA", group="---VERTICAL LINES [INTRADAY & DAILY]---", tooltip="Shows where MA calculations begin")
+dailyMA1 = input.bool(false, "Daily MA 1", group="---VERTICAL LINES [INTRADAY & DAILY]---", inline="row2")
+dailyMA2 = input.bool(false, "MA 2", group="---VERTICAL LINES [INTRADAY & DAILY]---", inline="row2")
+dailyMA3 = input.bool(false, "MA 3", group="---VERTICAL LINES [INTRADAY & DAILY]---", inline="row2")
+verticalLineStyle = input.string("Dashed", "Line Style", inline="row3", options=["Solid", "Dashed"], group="---VERTICAL LINES [INTRADAY & DAILY]---")
+verticalLineWidth = input.int(2, "Width",inline="row3", minval=1, maxval=5, group="---VERTICAL LINES [INTRADAY & DAILY]---")
 
 // INPUTS: DAILY HIGHS & LOWS
 showCurrentHL = input.bool(true, "Show Current Day HL", inline="curr_line1", group="---DAILY HIGHS & LOWS [INTRADAY]---")
@@ -466,6 +467,76 @@ ma_line_color = if colorByDirection
 else
     maColor
 
+// LOGIC: 5DMA Vertical Line
+fiveDaysAgo = isCrypto or isFutures ? getNthDayAgo(5) : getNthTradingDay(5)
+isFiveDaysAgo = time >= fiveDaysAgo and time[1] < fiveDaysAgo
+fiveDaysAgoBarIndex = getBarIndexForTimestamp(fiveDaysAgo)
+var line fiveDayMALine = na
+var label fiveDayMALabel = na
+
+// PLOTTING: 5DMA Vertical Line
+if show_intraday5DMA and isIntraday and isFiveDaysAgo and not na(fiveDaysAgoBarIndex)
+    // Delete previous line and label to avoid duplicates
+    if not na(fiveDayMALine)
+        line.delete(fiveDayMALine)
+
+    // Draw vertical line
+    lineStyleVal = verticalLineStyle == "Solid" ? line.style_solid : line.style_dashed
+    fiveDayMALine := line.new(
+         x1=fiveDaysAgoBarIndex, 
+         y1=low,  // Extremely low price to extend below chart
+         x2=fiveDaysAgoBarIndex, 
+         y2=high,   // Extremely high price to extend above chart
+         xloc=xloc.bar_index, 
+         color=maColor, 
+         style=lineStyleVal, 
+         width=verticalLineWidth
+         
+     )
+    line.set_extend(fiveDayMALine, extend.both)
+
+// LOGIC: Daily MA Vertical Lines
+var line ma1StartLine = na
+var line ma2StartLine = na
+var line ma3StartLine = na
+
+// Calculate the start timestamps for each MA based on market type
+ma1StartTimestamp = isCrypto or isFutures ? getNthDayAgo(ma1_length) : getNthTradingDay(ma1_length)
+
+ma2StartTimestamp = isCrypto or isFutures ? getNthDayAgo(ma2_length) : getNthTradingDay(ma2_length)
+
+ma3StartTimestamp = isCrypto or isFutures ? getNthDayAgo(ma3_length) : getNthTradingDay(ma3_length)
+
+// Check if we're at the start timestamp for each MA
+isMA1Start = time >= ma1StartTimestamp and time[1] < ma1StartTimestamp and dailyMA1 and not isIntraday
+isMA2Start = time >= ma2StartTimestamp and time[1] < ma2StartTimestamp and dailyMA2 and not isIntraday
+isMA3Start = time >= ma3StartTimestamp and time[1] < ma3StartTimestamp and dailyMA3 and not isIntraday
+
+// Get bar indices for the start timestamps
+ma1StartBarIndex = getBarIndexForTimestamp(ma1StartTimestamp)
+ma2StartBarIndex = getBarIndexForTimestamp(ma2StartTimestamp)
+ma3StartBarIndex = getBarIndexForTimestamp(ma3StartTimestamp)
+
+// PLOTTING: Daily MA Vertical Lines
+lineStyleVal = verticalLineStyle == "Solid" ? line.style_solid : line.style_dashed
+
+if isMA1Start and not na(ma1StartBarIndex) and dailyMA1 and not isIntraday
+    if not na(ma1StartLine)
+        line.delete(ma1StartLine)
+    ma1StartLine := line.new(x1=ma1StartBarIndex, y1=low,x2=ma1StartBarIndex, y2=high,xloc=xloc.bar_index, color=ma1_color, style=lineStyleVal, width=verticalLineWidth)
+    line.set_extend(ma1StartLine, extend.both)
+
+if isMA2Start and not na(ma2StartBarIndex) and dailyMA2 and not isIntraday
+    if not na(ma2StartLine)
+        line.delete(ma2StartLine)
+    ma2StartLine := line.new(x1=ma2StartBarIndex, y1=low,x2=ma2StartBarIndex, y2=high,xloc=xloc.bar_index, color=ma2_color, style=lineStyleVal, width=verticalLineWidth)
+    line.set_extend(ma2StartLine, extend.both)
+
+if isMA3Start and not na(ma3StartBarIndex) and dailyMA3 and not isIntraday
+    if not na(ma3StartLine)
+        line.delete(ma3StartLine)
+    ma3StartLine := line.new(x1=ma3StartBarIndex, y1=low,x2=ma3StartBarIndex, y2=high,xloc=xloc.bar_index, color=ma3_color, style=lineStyleVal, width=verticalLineWidth)
+    line.set_extend(ma3StartLine, extend.both)
 // LOGIC: DAILY HIGHS & LOWS
 var float PriorHigh = na
 var float PriorLow = na
