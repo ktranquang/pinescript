@@ -1,0 +1,46 @@
+//@version=5
+indicator("CB_MACD", overlay=true)
+
+// Define the MACD parameters
+fast_length = 5
+slow_length = 34
+signal_smoothing = 8
+
+// Calculate the MACD and Signal line
+macd_line = ta.ema(close, fast_length) - ta.ema(close, slow_length)
+signal_line = ta.ema(macd_line, signal_smoothing)
+
+// Define the bar color conditions
+green_cond = macd_line > signal_line and macd_line > 0 and signal_line > 0
+yellow_cond = macd_line < signal_line and macd_line > 0 and signal_line > 0
+purple_cond = macd_line < 0 and signal_line > 0
+red_cond = macd_line < 0 and signal_line < 0 and macd_line < signal_line 
+orange_cond = macd_line < 0 and signal_line < 0 and signal_line < macd_line
+blue_cond = macd_line > 0 and signal_line < 0 and macd_line > signal_line
+
+// Assign colors based on the conditions
+area_color = color(na)
+if green_cond
+    area_color := color.green
+if yellow_cond
+    area_color := color.yellow
+if purple_cond
+    area_color := color.rgb(237, 143, 201)
+if red_cond
+    area_color := color.red
+if orange_cond
+    area_color := color.orange
+if blue_cond
+    area_color := color.rgb(135, 206, 250)
+
+// Plot the MACD and Signal lines
+hline(0, "Zero Line", color=color.gray, linewidth=1)
+//plot(macd_line, color=color.blue, title="MACD Line", linewidth=2)
+//plot(signal_line, color=color.orange, title="Signal Line", linewidth=2)
+
+// Fill the area between the MACD line and the zero line based on conditions
+//fill(plot(macd_line), plot(0, "Zero Line"), color=area_color, transp=90)
+
+//fill(plot(signal_line), plot(0, "Zero Line"), style = plot.style_columns, color=area_color, transp=0)
+plot(signal_line, style=plot.style_columns, color=area_color, transp=0)
+plot(0, title="Zero Line", style=plot.style_columns, color=color.gray, transp=0)
