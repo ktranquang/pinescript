@@ -1,0 +1,234 @@
+//@version=5
+indicator('SN Algotrend', shorttitle='SN Algotrend', overlay=true)
+
+// Input variables for MACD settings
+fast_length = input(title = "Fast Length", defval = 5)
+slow_length = input(title = "Slow Length", defval = 34)
+src = input(title = "Source", defval = close)
+signal_length = input.int(title = "Signal Smoothing",  minval = 1, maxval = 50, defval = 8, display = display.data_window)
+sma_source = input.string(title = "Oscillator MA Type",  defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+sma_signal = input.string(title = "Signal Line MA Type", defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+// Calculating 
+fast_ma = sma_source == "SMA" ? ta.sma(src, fast_length) : ta.ema(src, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(src, slow_length) : ta.ema(src, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+
+// Input options for enabling/disabling tables
+showEMATable = input.bool(true, title='Show EMA Table')
+showTimeframeTable = input.bool(true, title='Show Timeframe Table')
+showLegendTable = input.bool(false, title='Show Legend Table') // Legend table off by default
+
+// debugCCI = input.bool(false, title='Debug CCI')
+// debugMACD = input.bool(false, title='Debug MACD')
+// debugMACDsignal = input.bool(false, title='Debug MACD signal')
+// debugAO = input.bool(false, title='Debug AO')
+
+// Input options for CCI settings
+length = input.int(20, minval=1)
+cciSrc = input(hlc3, title="Source")
+ma = ta.sma(cciSrc, length)
+cci = (cciSrc - ma) / (0.015 * ta.dev(cciSrc, length))
+
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+typeMA = input.string(title = "Method", defval = "SMA", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="Smoothing")
+smoothingLength = input.int(title = "CCI Length", defval = 5, minval = 1, maxval = 100, group="Smoothing")
+
+smoothingLine = ma(cci, smoothingLength, typeMA)
+
+// Color inputs for phases
+bearColor = input.color(color.red, title='Bear')
+bearExhaustColor = input.color(color.orange, title='BearExhaust')
+bullColor = input.color(color.green, title='Bull')
+bullExhaustColor = input.color(color.yellow, title='BullExhaust')
+semiBearColor = input.color(color.rgb(237, 143, 201), title='SemiBear')  // Pink color
+semiBullColor = input.color(color.rgb(135, 206, 250), title='SemiBull')  // Light Blue color
+neutralColor = input.color(color.gray, title='Neutral')
+
+// Define the EMAs
+ema8 = ta.ema(close, 8)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+
+// Determine the color of the 8 EMA box
+ema8Color = ema8 < close ? color.green : color.red
+
+// Determine the color of the 20 EMA box
+ema20Color = ema8 > ema20 ? color.green : color.red
+
+// Determine the color of the 50 EMA box
+ema50Color = ema20 > ema50 ? color.green : color.red
+
+// Define the SMA 200
+sma200 = ta.sma(close, 200)
+
+// Determine the color of the 50 EMA based on the 20 EMA crossing
+ema_color = ema20 > ema50 ? color.green : ema20 < ema50 ? color.red : color.blue
+
+// Determine the color of the SMA 200 based on the 50 EMA crossing
+sma_color = ema50 > sma200 ? color.green : ema50 < sma200 ? color.red : na
+
+// Define the colors for the EMA cloud
+cloud_color_up = color.new(color.green, 70)
+cloud_color_down = color.new(color.red, 70)
+
+// Plot the EMA cloud between the 8 EMA and 20 EMA
+p1 = plot(ema8, color=color.new(color.blue, 100), title='8 EMA')
+p2 = plot(ema20, color=color.new(color.orange, 100), title='20 EMA')
+fill(p1, p2, color=ema8 > ema20 ? cloud_color_up : cloud_color_down)
+
+// Plot the 50 EMA with the dynamic color
+plot(ema50, color=ema_color, linewidth=2, title='50 EMA')
+
+// Plot the SMA 200 with circles and dynamic color
+plot(sma200, color=sma_color, style=plot.style_circles, title='200 SMA')
+
+// Calculate Awesome Oscillator (AO)
+ao_fast_length = input.int(5, title='AO Fast Length')
+ao_slow_length = input.int(34, title='AO Slow Length')
+
+medianPrice = hl2
+ao = ta.sma(medianPrice, ao_fast_length) - ta.sma(medianPrice, ao_slow_length)
+
+// Initialize phase variable
+var int phase = na
+
+// Update phase based on conditions
+if cci < 0 and macd < 0 and signal < 0 and macd < signal 
+    phase := 1  // Bear red
+else if cci < 0 and macd < 0 and signal < 0 and macd > signal
+    phase := 2  // BearExhaust orange
+else if cci > 0 and macd > 0 and signal > 0 and macd > signal
+    phase := 3  // Bull green
+else if cci > 0 and macd > 0 and signal > 0 and macd < signal
+    phase := 4  // BullExhaust yellow
+else if cci < 0 and macd < 0 and signal > 0 and macd < signal
+    phase := 5  // SemiBear pink
+else if cci > 0 and macd > 0 and signal < 0 and macd > signal
+    phase := 7  // SemiBull light blue 
+else if (cci < 0 and macd > 0 and signal > 0 and macd < signal) or
+ (cci > 0 and macd < 0 and signal < 0 and macd > signal)
+    phase := 6  // Neutral grey
+
+// Determine candle color based on phase
+candleColor = color(na)
+
+if phase == 1
+    candleColor := bearColor
+else if phase == 2
+    candleColor := bearExhaustColor
+else if phase == 3
+    candleColor := bullColor
+else if phase == 4
+    candleColor := bullExhaustColor
+else if phase == 5
+    candleColor := semiBearColor
+else if phase == 7
+    candleColor := semiBullColor
+else if phase == 6
+    candleColor := neutralColor
+
+// Change bar colors based on phase
+barcolor(candleColor)
+
+// Plot candles with dynamic outline color and transparent body
+plotcandle(open, high, low, close, title='Candle Colors', color=color.new(color.white, 100), wickcolor=candleColor, bordercolor=candleColor)
+
+
+// var label cciLabel = na
+
+// if barstate.islast
+//     for i = 0 to 100
+//         cciLabel := label.new(bar_index - i, high[i] + ta.valuewhen(bar_index[1] != bar_index, high[i], 0), 
+//          "macd " + str.tostring(cci[i]), 
+//          style=label.style_label_left, color=color.blue, textcolor=color.white)
+// // Plot values above each candle
+// label.new(bar_index, high, "CCI Custom: " + str.tostring(cci), 
+//  style=label.style_label_center, color=color.blue, textcolor=color.white)
+
+// Fetching colors of latest candles from different timeframes
+var color color1M = na
+var color color3M = na
+var color color5M = na
+var color color15M = na
+var color color1H = na
+var color color4H = na
+var color colorD = na
+var color colorW = na
+var color colorM = na
+
+candleColor0 = request.security(syminfo.tickerid, '1', candleColor)
+candleColor1 = request.security(syminfo.tickerid, '3', candleColor)
+candleColor2 = request.security(syminfo.tickerid, '5', candleColor)
+candleColor3 = request.security(syminfo.tickerid, '15', candleColor)
+candleColor4 = request.security(syminfo.tickerid, '60', candleColor)
+candleColor5 = request.security(syminfo.tickerid, '240', candleColor)
+candleColor6 = request.security(syminfo.tickerid, '1D', candleColor)
+candleColor7 = request.security(syminfo.tickerid, '1W', candleColor)
+candleColor8 = request.security(syminfo.tickerid, '1M', candleColor)
+
+if barstate.islast
+    color1M := candleColor0
+    color3M := candleColor1
+    color5M := candleColor2
+    color15M := candleColor3
+    color1H := candleColor4
+    color4H := candleColor5
+    colorD := candleColor6
+    colorW := candleColor7
+    colorM := candleColor8
+
+// Create a table for EMAs
+if showEMATable
+    var TableId = table.new(position = position.top_right, columns = 3, rows = 1, bgcolor = color.black, border_width = 1)
+    if barstate.islast
+        table.cell(TableId, 0, 0, "8 EMA: " + str.tostring(ema8, '#.##'), bgcolor=ema8Color)
+        table.cell(TableId, 1, 0, "20 EMA: " + str.tostring(ema20, '#.##'), bgcolor=ema20Color)
+        table.cell(TableId, 2, 0, "50 EMA: " + str.tostring(ema50, '#.##'), bgcolor=ema50Color)
+
+// Create a table for Timeframes
+if showTimeframeTable
+    var TimeframeTableId = table.new(position = position.bottom_right, columns = 9, rows = 1, bgcolor = color.black, border_width = 1)
+    if barstate.islast
+        table.cell(TimeframeTableId, 0, 0, "1m", bgcolor=color1M)
+        table.cell(TimeframeTableId, 1, 0, "3m", bgcolor=color3M)
+        table.cell(TimeframeTableId, 2, 0, "5m", bgcolor=color5M)
+        table.cell(TimeframeTableId, 3, 0, "15m", bgcolor=color15M)
+        table.cell(TimeframeTableId, 4, 0, "1h", bgcolor=color1H)
+        table.cell(TimeframeTableId, 5, 0, "4h", bgcolor=color4H)
+        table.cell(TimeframeTableId, 6, 0, "D", bgcolor=colorD)
+        table.cell(TimeframeTableId, 7, 0, "W", bgcolor=colorW)
+        table.cell(TimeframeTableId, 8, 0, "M", bgcolor=colorM)
+
+// Create a legend table
+if showLegendTable
+    var LegendTableId = table.new(position = position.bottom_left, columns = 2, rows = 7, bgcolor = color.black, border_width = 1)
+    if barstate.islast
+        table.cell(LegendTableId, 0, 0, "Bear", bgcolor=bearColor)
+        table.cell(LegendTableId, 0, 1, "BearExhaust", bgcolor=bearExhaustColor)
+        table.cell(LegendTableId, 0, 2, "Bull", bgcolor=bullColor)
+        table.cell(LegendTableId, 0, 3, "BullExhaust", bgcolor=bullExhaustColor)
+        table.cell(LegendTableId, 0, 4, "SemiBear", bgcolor=semiBearColor)
+        table.cell(LegendTableId, 0, 5, "SemiBull", bgcolor=semiBullColor)
+        table.cell(LegendTableId, 0, 6, "Neutral", bgcolor=neutralColor)
+
+// Plot debugging values
+// if debugCCI
+//     label.new(bar_index, high, "CCI: " + str.tostring(cci, '#.##'), style=label.style_label_center, color=color.blue, textcolor=color.white)
+
+// if debugMACD
+//     label.new(bar_index, high + 2 * syminfo.mintick, "MACD: " + str.tostring(macd, '#.##'), style=label.style_label_center, color=color.red, textcolor=color.white)
+
+// if debugMACDsignal
+//     label.new(bar_index, high + 4 * syminfo.mintick, "Signal: " + str.tostring(signal, '#.##'), style=label.style_label_center, color=color.green, textcolor=color.white)
+
+// if debugAO
+//     label.new(bar_index, high + 6 * syminfo.mintick, "AO: " + str.tostring(ao, '#.##'), style=label.style_label_center, color=color.orange, textcolor=color.white)
