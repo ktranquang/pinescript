@@ -398,33 +398,44 @@ customTimeBarIndex(_ts) =>
 
 
 // FUNCTIONS: 5DMA, HIGHS/LOWS, PIVOTS
+
+// === CALCULATE TRUE 5-DMA PERIOD ===
 get_5dma_period() =>
+    // For daily/weekly timeframes, use simple period count
     if timeframe.isdaily
         5
     else if timeframe.isweekly
         1
     else
+        // Calculate based on market type and timeframe
         float minutes_per_trading_day = 0.0
+        
         if isCrypto
+            // Crypto: 24 hours × 60 minutes = 1440 minutes per day
             minutes_per_trading_day := 24 * 60
         else if isFutures
+            // Most futures trade 23 hours (CME, CBOT, etc.)
             minutes_per_trading_day := 23 * 60
         else
+            // Stocks: 6.5 hours (9:30 AM - 4:00 PM ET) = 390 minutes
             minutes_per_trading_day := 6.5 * 60
+        
+        // Total minutes in 5 trading days
         total_minutes_5_days = 5 * minutes_per_trading_day
-        timeframe_minutes = timeframe.multiplier * (timeframe.period == "D" ? 1440 : timeframe.period == "W" ? 10080 : timeframe.period == "M" ? 43200 : timeframe.period == "H" ? 60 : timeframe.period == "m" ? 1 : 1)
+        
+        // Convert current timeframe to minutes
+        timeframe_minutes = timeframe.multiplier * (
+          timeframe.period == "D" ? 1440 :
+          timeframe.period == "W" ? 10080 :
+          timeframe.period == "M" ? 43200 :
+          timeframe.period == "H" ? 60 :
+          timeframe.period == "m" ? 1 : 1)
+        
+        // Calculate required period and cap at 5000
         period = total_minutes_5_days / timeframe_minutes
-        // Adjust for trading days
-        if isCrypto
-            math.min(5000, math.max(1, math.round(period)))
-        else
-            // Use getNthTradingDay to find the start of the 5th trading day
-            start_timestamp = getNthTradingDay(5)
-            if not na(start_timestamp)
-                bars_since_start = math.round((time - start_timestamp) / (timeframe_minutes * 60 * 1000))
-                math.min(5000, math.max(1, bars_since_start))
-            else
-                math.min(5000, math.max(1, math.round(period)))
+        math.min(5000, math.max(1, math.round(period)))
+
+
 
 pixelsToPrice(pixels) =>
     visibleHigh = ta.highest(high, 100)
@@ -1267,3 +1278,1194 @@ if barstate.islast and not isIntraday and showAVWAPDaily
     if matchAVWAPColor
         table.cell(dailyStatsTable, 0, 3, "YTD Low", bgcolor=colorYTDLow, text_color=color.white, text_size=text_size)
 
+
+// //@version=5
+// indicator(title="Multi VWAP & Alpha 5DMA", shorttitle="VWAP+Alpha", overlay=true, max_bars_back=5000, max_boxes_count=20, max_labels_count=50, max_lines_count=500)
+
+// // IMPORTS
+// import Protervus/MarketHolidays/1
+
+// // -----------------------------------------------------------------------------------
+// // INPUTS
+// // -----------------------------------------------------------------------------------
+
+// // VWAP Inputs
+// group_vwap = "---AVWAP [ALL]---"
+// dataSrcInput = input.string("ohlc4", "Source", options=["ohlc4", "open", "high", "low", "close", "hl2", "hlc3", "hlcc4"], group=group_vwap)
+// lineWidthAll = input.int(3, "Line Width", group=group_vwap)
+// timezoneInput = input.string("UTC", "Timezone", options=["UTC", "America/New_York", "Europe/London", "Asia/Tokyo"], group=group_vwap)
+// showAVWAPAfterLastBar = input.bool(false, "Show AVWAP Price After Last Bar", group=group_vwap)
+// i_useCurrentVWAP = input.bool(true, "Use Most Recent VWAP", group=group_vwap)
+// i_showLabels = input.bool(true, "Show Labels", group=group_vwap)
+// i_showThinLines = input.bool(false, "Use Thin Lines", group=group_vwap)
+
+// // Intraday VWAP Inputs
+// group_vwap_intraday = "---AVWAP [INTRADAY]---"
+// showOneDay = input.bool(true, "1-Day AVWAP", inline="1D", group=group_vwap_intraday)
+// colorOneDay = input.color(color.yellow, "", inline="1D", group=group_vwap_intraday)
+// showTwoDay = input.bool(true, "2-Day AVWAP", inline="2D", group=group_vwap_intraday)
+// colorTwoDay = input.color(color.green, "", inline="2D", group=group_vwap_intraday)
+// showWTD = input.bool(false, "Week-To-Date", inline="WTD", group=group_vwap_intraday)
+// colorWTD = input.color(color.fuchsia, "", inline="WTD", group=group_vwap_intraday)
+// showMTD = input.bool(true, "Month-To-Date", inline="MTD", group=group_vwap_intraday)
+// colorMTD = input.color(color.blue, "", inline="MTD", group=group_vwap_intraday)
+
+// // Daily VWAP Inputs
+// group_vwap_daily = "---AVWAP [DAILY]---"
+// showYTD = input.bool(true, "Year-To-Date", inline="YTD", group=group_vwap_daily)
+// colorYTD = input.color(color.gray, "", inline="YTD", group=group_vwap_daily)
+// showYTDLow = input.bool(true, "Year-To-Date Low", inline="YTDLow", group=group_vwap_daily)
+// colorYTDLow = input.color(color.yellow, "", inline="YTDLow", group=group_vwap_daily)
+// showYTDHigh = input.bool(true, "Year-To-Date High", inline="YTDHigh", group=group_vwap_daily)
+// colorYTDHigh = input.color(color.green, "", inline="YTDHigh", group=group_vwap_daily)
+
+// // 5-Day Moving Average Inputs
+// group_5dma = "---5-DAY MOVING AVERAGE [INTRADAY]---"
+// showMA = input.bool(true, "5-Day Moving Average", inline="ma_settings", group=group_5dma)
+// lineWidthMA = input.int(2, "Width", minval=1, maxval=5, inline="ma_settings", group=group_5dma)
+// maColor = input.color(color.orange, "Color", inline="ma_settings", group=group_5dma)
+// colorByDirection = input.bool(false, "Color By Direction", inline="row2", group=group_5dma)
+// showFill = input.bool(false, "Cloud Fill", inline="row2", group=group_5dma)
+// upColor = input.color(color.green, "Up Color", inline="row3", group=group_5dma)
+// downColor = input.color(color.red, "Down Color", inline="row3", group=group_5dma)
+// indecisionColor = input.color(#FFFFC5, "Indecision Color", inline="row3", group=group_5dma)
+// indecisionFillColor = input.color(color.rgb(209, 209, 209), "Indecision Fill", inline="row3", group=group_5dma)
+
+// // Daily Moving Averages Inputs
+// group_ma_daily = "---MOVING AVERAGES [DAILY]---"
+// ma1_show = input.bool(false, "Daily MA 1", inline="Row1", group=group_ma_daily)
+// ma1_length = input.int(10, "", minval=1, inline="Row1", group=group_ma_daily)
+// ma1_type = input.string("SMA", "", options=["SMA", "EMA"], inline="Row1", group=group_ma_daily)
+// ma1_color = input.color(color.rgb(44, 163, 193), "", inline="Row1", group=group_ma_daily)
+
+// ma2_show = input.bool(false, "Daily MA 2", inline="Row2", group=group_ma_daily)
+// ma2_length = input.int(20, "", minval=1, inline="Row2", group=group_ma_daily)
+// ma2_type = input.string("SMA", "", options=["SMA", "EMA"], inline="Row2", group=group_ma_daily)
+// ma2_color = input.color(color.green, "", inline="Row2", group=group_ma_daily)
+
+// ma3_show = input.bool(false, "Daily MA 3", inline="Row3", group=group_ma_daily)
+// ma3_length = input.int(50, "", minval=1, inline="Row3", group=group_ma_daily)
+// ma3_type = input.string("SMA", "", options=["SMA", "EMA"], inline="Row3", group=group_ma_daily)
+// ma3_color = input.color(color.rgb(143, 4, 4), "", inline="Row3", group=group_ma_daily)
+
+// ma_source = input.source(close, "Source", group=group_ma_daily)
+// line_width = input.int(2, "Line Width", minval=1, group=group_ma_daily)
+// show_ma1_intraday = input.bool(false, "On Intraday - Show Daily MA 1", inline="Row5", group=group_ma_daily)
+// show_ma2_intraday = input.bool(false, "MA 2", inline="Row5", group=group_ma_daily)
+// show_ma3_intraday = input.bool(false, "MA 3", inline="Row5", group=group_ma_daily)
+// auto_smooth = input.bool(true, "Enable Auto-Smoothing", group=group_ma_daily, tooltip="Automatically smooth MAs based on length and timeframe")
+// smooth_type = input.string("SMA", "Smoothing Type", options=["EMA", "SMA", "WMA", "HMA", "VWMA", "DEMA", "TEMA"], group=group_ma_daily)
+
+// // Vertical Lines Inputs
+// group_vertical = "---VERTICAL LINES [INTRADAY & DAILY]---"
+// show_intraday5DMA = input.bool(true, "Intraday 5-Day MA", group=group_vertical, tooltip="Shows where MA calculations begin")
+// dailyMA1 = input.bool(false, "Daily MA 1", inline="row2", group=group_vertical)
+// dailyMA2 = input.bool(false, "MA 2", inline="row2", group=group_vertical)
+// dailyMA3 = input.bool(false, "MA 3", inline="row2", group=group_vertical)
+// verticalLineStyle = input.string("Dashed", "Line Style", inline="row3", options=["Solid", "Dashed"], group=group_vertical)
+// verticalLineWidth = input.int(2, "Width", inline="row3", minval=1, maxval=5, group=group_vertical)
+
+// // Daily Highs & Lows Inputs
+// group_hl = "---DAILY HIGHS & LOWS [INTRADAY]---"
+// showCurrentHL = input.bool(true, "Show Current Day HL", inline="curr_line1", group=group_hl)
+// currLineColor = input.color(#FFFF00, "Color", inline="curr_line1", group=group_hl)
+// currLineStyle = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="curr_line1", group=group_hl)
+// showCurrBox = input.bool(true, "Fill", inline="curr_line1", group=group_hl)
+// currBoxColor = input.color(color.white, "", inline="curr_line1", group=group_hl)
+// showPriorHL = input.bool(true, "Show Prior Day HL", inline="prior_line1", group=group_hl)
+// priorLineColor = input.color(#00FF00, "Color", inline="prior_line1", group=group_hl)
+// priorLineStyle = input.string("Dashed", "Style", options=["Solid", "Dashed", "Dotted"], inline="prior_line1", group=group_hl)
+// showPriorBox = input.bool(true, "Fill", inline="prior_line1", group=group_hl)
+// priorBoxColor = input.color(color.white, "", inline="prior_line1", group=group_hl)
+// extendPriorLine = input.bool(true, "Extend Prior Day Line", inline="extend1", group=group_hl)
+// extendPriorBox = input.bool(false, "Extend Prior Day Fill", inline="extend1", group=group_hl)
+// showLeftPrices = input.bool(true, "Show Price At Highs & Lows", group=group_hl)
+
+// // Pivot Points Inputs
+// group_pivots = "---PIVOT POINTS [INTRADAY]---"
+// showPivots = input.bool(true, "Pivot Points", inline="Row1", group=group_pivots)
+// numPivots = input.int(3, "Number of Pivots", inline="Row1", minval=1, maxval=3, group=group_pivots)
+// pivotLineStyle = input.string("Dashed", "Line Style", inline="Row2", options=["Solid", "Dashed"], group=group_pivots)
+// pivotLineWidth = input.int(1, "Line Width", inline="Row2", minval=1, maxval=5, group=group_pivots)
+// colorPivot = input.color(#a9a9a9, "Price", inline="Row3", group=group_pivots)
+// colorResistance = input.color(color.green, "Lines Above", inline="Row3", group=group_pivots)
+// colorSupport = input.color(color.red, "Lines Below", inline="Row3", group=group_pivots)
+// showPivotLabels = input.bool(true, "Show Pivot Labels", group=group_pivots)
+
+// // Stats Table Inputs
+// group_tables = "---STATS TABLES [ALL]---"
+// tableLocation = input.string("bottom_left", "Table Location", options=["top_left", "middle_left", "bottom_left", "top_center", "center", "bottom_center", "top_right", "middle_right", "bottom_right"], group=group_tables)
+// matchAVWAPColor = input.bool(true, "Cell Background Color Matches AVWAP", group=group_tables)
+
+// // Intraday Stats Table Inputs
+// group_tables_intraday = "---STATS TABLES [INTRADAY]---"
+// showAVWAP = input.bool(false, "AVWAP", inline="line1", group=group_tables_intraday)
+// show5DMA = input.bool(false, "5 DMA", inline="line1", group=group_tables_intraday)
+// showDayHL = input.bool(false, "Day H/L", inline="line1", group=group_tables_intraday)
+// showPriorHLTable = input.bool(false, "Prior H/L", inline="line1", group=group_tables_intraday)
+// showPivotsTable = input.bool(false, "Pivots", inline="line1", group=group_tables_intraday)
+// showDailyATR = input.bool(false, "Daily ATR", inline="line2", group=group_tables_intraday)
+// atrLength = input.int(20, "ATR Length", minval=1, inline="line2", group=group_tables_intraday)
+
+// // Daily Stats Table Inputs
+// group_tables_daily = "---STATS TABLES [DAILY]---"
+// showAVWAPDaily = input.bool(false, "AVWAP", inline="line1", group=group_tables_daily)
+
+// // Miscellaneous Inputs
+// group_misc = "---MISCELLANEOUS---"
+// textSize = input.string("Medium", "Text Size", options=["Small", "Medium", "Large"], group=group_misc)
+
+// // -----------------------------------------------------------------------------------
+// // MARKET DETECTION
+// // -----------------------------------------------------------------------------------
+
+// isCrypto = syminfo.type == "crypto" or syminfo.session == "24x7" or syminfo.session == "0000-0000"
+// isFutures = syminfo.type == "futures"
+// isStock = not isCrypto and not isFutures
+// isDaily = timeframe.isdaily
+// isIntraday = timeframe.period != "D" and timeframe.period != "W" and timeframe.period != "M"
+// minutes_per_day = isCrypto ? 1440 : isFutures ? 1380 : 390
+
+// // Initialize holidays automatically
+// var int[] holidays = array.new_int(0)
+// getMarketHolidays() =>
+//     var int[] marketHolidays = array.new_int(0)
+//     if isStock
+//         marketHolidays := MarketHolidays.getHolidays(syminfo.country)
+//     else if isFutures
+//         marketHolidays := MarketHolidays.getHolidays("US")
+//     else if isCrypto
+//         marketHolidays := array.new_int(0)
+//     marketHolidays
+// holidays := getMarketHolidays()
+
+// // -----------------------------------------------------------------------------------
+// // HELPER FUNCTIONS
+// // -----------------------------------------------------------------------------------
+
+// // Map text size input to Pine Script size constants
+// getTextSize(textSizeInput) =>
+//     switch textSizeInput
+//         "Small" => size.small
+//         "Medium" => size.normal
+//         "Large" => size.large
+//         => size.normal
+
+// // Format price to two decimal places
+// formatPrice(_price) =>
+//     roundedValue = math.round(_price * 100) / 100
+//     str.tostring(roundedValue, "#.00")
+
+// // Convert timestamp to day
+// timeToDay(_ts, _hr=0, _min=0, _sec=0) =>
+//     y = year(_ts, timezoneInput)
+//     m = month(_ts, timezoneInput)
+//     d = dayofmonth(_ts, timezoneInput)
+//     timestamp(timezoneInput, y, m, d, _hr, _min, _sec)
+
+// // Convert timestamp to day in UTC
+// timeToDayUTC(_ts, _hr=0, _min=0, _sec=0) =>
+//     y = year(_ts, "UTC")
+//     m = month(_ts, "UTC")
+//     d = dayofmonth(_ts, "UTC")
+//     timestamp("UTC", y, m, d, _hr, _min, _sec)
+
+// // Convert number to two-digit string
+// twoDigits(_num) =>
+//     _num < 10 ? "0" + str.tostring(_num) : str.tostring(_num)
+
+// // Format timestamp for labels
+// tsForLabel(_ts) =>
+//     y = twoDigits(year(_ts))
+//     m = twoDigits(month(_ts))
+//     d = twoDigits(dayofmonth(_ts))
+//     h = twoDigits(hour(_ts))
+//     min = twoDigits(minute(_ts))
+//     s = twoDigits(second(_ts))
+//     y + "." + m + "." + d + " - " + h + ":" + min
+
+// // Check if current bar is at custom timestamp
+// isCustomTime(_ts) =>
+//     time >= _ts and time[1] < _ts
+
+// // Get bar index for a timestamp
+// getBarIndexForTimestamp(_ts) =>
+//     var int barIdx = na
+//     if time >= _ts and time[1] < _ts
+//         barIdx := bar_index
+//     barIdx
+
+// // Check if timestamp is a trading day
+// isTradingDay(_tStamp) =>
+//     if isCrypto
+//         true
+//     else
+//         dayOfWeek = dayofweek(_tStamp, timezoneInput)
+//         dayTimestamp = timestamp(timezoneInput, year(_tStamp, timezoneInput), month(_tStamp, timezoneInput), dayofmonth(_tStamp, timezoneInput), 0, 0)
+//         isWeekend = dayOfWeek == dayofweek.saturday or dayOfWeek == dayofweek.sunday
+//         isHoliday = array.includes(holidays, dayTimestamp)
+//         not isWeekend and not isHoliday
+
+// // Get timestamp for nth day ago
+// getNthDayAgo(nDays) =>
+//     currentUTC = timestamp("UTC", year(timenow), month(timenow), dayofmonth(timenow), 0, 0, 0)
+//     currentUTC - (nDays - 1) * 24 * 60 * 60 * 1000
+
+// // Fill array with past n days
+// var int[] pastNDaysTimestamps = array.new_int(0)
+// fillPastNDaysArray(_n) =>
+//     array.clear(pastNDaysTimestamps)
+//     millisecondsInADay = 24 * 60 * 60 * 1000
+//     for i = 0 to _n-1
+//         dayTimestamp = timeToDay(timenow, 0, 0, 0) - i * millisecondsInADay
+//         array.push(pastNDaysTimestamps, dayTimestamp)
+//     pastNDaysTimestamps
+
+// // Get nth trading day timestamp
+// var int[] nTradingDaysArray = array.new_int(0)
+// getNthTradingDay(nTradingDays) =>
+//     if isCrypto
+//         getNthDayAgo(nTradingDays)
+//     else
+//         array.clear(nTradingDaysArray)
+//         nDays = nTradingDays + math.floor((nTradingDays-1)/7) * 4 + 5
+//         var int[] allDaysArr = fillPastNDaysArray(nDays)
+//         if array.size(allDaysArr) >= nDays-1
+//             for i = 0 to nDays-1
+//                 if isTradingDay(array.get(allDaysArr, i))
+//                     array.unshift(nTradingDaysArray, array.get(allDaysArr, i))
+//             if array.size(nTradingDaysArray) - nTradingDays >= 0
+//                 array.get(nTradingDaysArray, array.size(nTradingDaysArray)-nTradingDays)
+//             else
+//                 na
+//         else
+//             na
+
+// // Convert pixels to price units
+// pixelsToPrice(pixels) =>
+//     visibleHigh = ta.highest(high, 100)
+//     visibleLow = ta.lowest(low, 100)
+//     priceRange = visibleHigh - visibleLow
+//     chartHeightPixels = 500
+//     pixels * priceRange / chartHeightPixels
+
+// // -----------------------------------------------------------------------------------
+// // VWAP FUNCTIONS
+// // -----------------------------------------------------------------------------------
+
+// // Select data source
+// dataSrc = switch dataSrcInput
+//     "ohlc4" => ohlc4
+//     "open"  => open
+//     "high"  => high
+//     "low"   => low
+//     "close" => close
+//     "hl2"   => hl2
+//     "hlc3"  => hlc3
+//     "hlcc4" => hlcc4
+//     => ohlc4
+
+// // VWAP since specific timeframe
+// vwapSince(_tf) =>
+//     var float vwapSum = na
+//     var float volumeSum = na
+//     if ta.change(time(_tf)) != 0
+//         vwapSum := 0
+//         volumeSum := 0
+//     vwapSum := nz(vwapSum) + dataSrc * volume
+//     volumeSum := nz(volumeSum) + volume
+//     vwapSum / volumeSum
+
+// // VWAP since custom timestamp
+// vwapSinceCustomDate(_timeStamp) =>
+//     var float vwapSum = na
+//     var float volumeSum = na
+//     if time >= _timeStamp and time[1] < _timeStamp
+//         vwapSum := dataSrc * volume
+//         volumeSum := volume
+//     else if time >= _timeStamp
+//         vwapSum := nz(vwapSum) + dataSrc * volume
+//         volumeSum := nz(volumeSum) + volume
+//     time >= _timeStamp ? vwapSum / volumeSum : na
+
+// // Year-to-date VWAP
+// vwapYTD() =>
+//     var float vwapSumYTD = na
+//     var float volumeSumYTD = na
+//     if year(time) != year(time[1])
+//         vwapSumYTD := 0
+//         volumeSumYTD := 0
+//     vwapSumYTD := nz(vwapSumYTD) + dataSrc * volume
+//     volumeSumYTD := nz(volumeSumYTD) + volume
+//     vwapSumYTD / volumeSumYTD
+
+// // Anchored VWAP
+// avwap(_anchorBarIndex, _src) =>
+//     var float vwapSum = na
+//     var float volSum = na
+//     var int currentAnchor = na
+//     var int latestAnchor = na
+//     if not na(_anchorBarIndex) and _anchorBarIndex >= 0
+//         latestAnchor := _anchorBarIndex
+//     if na(latestAnchor)
+//         na
+//     else
+//         if latestAnchor != currentAnchor
+//             vwapSum := na
+//             volSum := na
+//             currentAnchor := latestAnchor
+//         if bar_index >= latestAnchor
+//             vwapSum := nz(vwapSum, 0) + _src * volume
+//             volSum := nz(volSum, 0) + volume
+//             vwapSum / volSum
+//         else
+//             na
+
+// // Get start of week timestamp
+// getStartOfWeekTimestamp() =>
+//     if isCrypto
+//         currentTime = timenow
+//         currentDayUTC = dayofweek(currentTime, "UTC")
+//         daysSinceSunday = currentDayUTC - 1
+//         timestamp("UTC", year(currentTime), month(currentTime), dayofmonth(currentTime) - daysSinceSunday, 0, 0, 0)
+//     else
+//         timestamp(timezoneInput, year(timenow), month(timenow), dayofmonth(timenow) - dayofweek(timenow, timezoneInput), 0, 0, 0)
+
+// // Get start of month timestamp
+// getStartOfMonthTimestamp() =>
+//     if isCrypto
+//         timestamp("UTC", year(timenow), month(timenow), 1, 0, 0, 0)
+//     else
+//         timestamp(timezoneInput, year(timenow), month(timenow), 1, 9, 30, 0)
+
+// // Get start of year timestamp
+// getStartOfYearTimestamp() =>
+//     if isCrypto
+//         timestamp("UTC", year(timenow), 1, 1, 0, 0, 0) + 60 * 60 * 1000
+//     else
+//         timestamp(timezoneInput, year(timenow), 1, 1, 9, 30, 0)
+
+// // Get YTD low timestamp
+// getYTDLowTimestamp() =>
+//     if not isDaily
+//         na
+//     else
+//         var float ytdLow = na
+//         var int ytdLowTimestamp = na
+//         if year(time) != year(time[1])
+//             ytdLow := low
+//             ytdLowTimestamp := time
+//         else
+//             if low < ytdLow or na(ytdLow)
+//                 ytdLow := low
+//                 ytdLowTimestamp := time
+//             else if low == ytdLow and time > ytdLowTimestamp
+//                 ytdLowTimestamp := time
+//         ytdLowTimestamp
+
+// // Get YTD high timestamp
+// getYTDHighTimestamp() =>
+//     if not isDaily
+//         na
+//     else
+//         var float ytdHigh = na
+//         var int ytdHighTimestamp = na
+//         if year(time) != year(time[1])
+//             ytdHigh := high
+//             ytdHighTimestamp := time
+//         else
+//             if high > ytdHigh or na(ytdHigh)
+//                 ytdHigh := high
+//                 ytdHighTimestamp := time
+//             else if high == ytdHigh and time > ytdHighTimestamp
+//                 ytdHighTimestamp := time
+//         ytdHighTimestamp
+
+// // Get YTD high and bar index
+// getYTDHigh() =>
+//     if not isDaily
+//         [na, na]
+//     else
+//         var float ytdHigh = na
+//         var int ytdHighBar = na
+//         if na(ytdHigh) and barstate.isfirst
+//             ytdHigh := high
+//             ytdHighBar := bar_index
+//         if ta.change(time("D")) and year(time) != year(time[1])
+//             ytdHigh := high
+//             ytdHighBar := bar_index
+//         if high > ytdHigh and not na(ytdHigh)
+//             ytdHigh := high
+//             ytdHighBar := bar_index
+//         else if high == ytdHigh and bar_index > ytdHighBar and not na(ytdHighBar)
+//             ytdHighBar := bar_index
+//         [ytdHigh, ytdHighBar]
+
+// // -----------------------------------------------------------------------------------
+// // 5DMA, HIGHS/LOWS, PIVOTS FUNCTIONS
+// // -----------------------------------------------------------------------------------
+
+// // Calculate 5DMA period
+// get_5dma_period() =>
+//     if timeframe.isdaily
+//         5
+//     else if timeframe.isweekly
+//         1
+//     else
+//         float minutes_per_trading_day = isCrypto ? 24 * 60 : isFutures ? 23 * 60 : 6.5 * 60
+//         total_minutes_5_days = 5 * minutes_per_trading_day
+//         timeframe_minutes = timeframe.multiplier * (timeframe.period == "D" ? 1440 : timeframe.period == "W" ? 10080 : timeframe.period == "M" ? 43200 : timeframe.period == "H" ? 60 : timeframe.period == "m" ? 1 : 1)
+//         period = total_minutes_5_days / timeframe_minutes
+//         if isCrypto
+//             math.min(5000, math.max(1, math.round(period)))
+//         else
+//             start_timestamp = getNthTradingDay(5)
+//             if not na(start_timestamp)
+//                 bars_since_start = math.round((time - start_timestamp) / (timeframe_minutes * 60 * 1000))
+//                 math.min(5000, math.max(1, bars_since_start))
+//             else
+//                 math.min(5000, math.max(1, math.round(period)))
+
+// // Calculate timeframe minutes
+// get_timeframe_minutes() =>
+//     timeframe_multiplier = timeframe.multiplier
+//     timeframe_period = timeframe.period
+//     timeframe_period == "D" ? 1440 * timeframe_multiplier : timeframe_period == "W" ? 10080 * timeframe_multiplier : timeframe_period == "M" ? 43200 * timeframe_multiplier : timeframe_period == "H" ? 60 * timeframe_multiplier : timeframe_period == "m" ? 1 * timeframe_multiplier : 1
+
+// timeframe_minutes = get_timeframe_minutes()
+
+// // Calculate adaptive smoothing length
+// calculate_smoothing_length(ma_length, intensity) =>
+//     base_factor = math.log(ma_length + 15) / 1.5
+//     timeframe_factor = isIntraday ? math.max(1, math.log(timeframe_minutes + 15) / 1) : 1
+//     intensity_factor = math.pow(intensity, 3)
+//     smoothing_length = math.max(2, math.round(base_factor * timeframe_factor * intensity_factor))
+//     int(math.min(500, smoothing_length))
+
+// // Smooth moving average
+// safe_smooth(value, length, smooth_type) =>
+//     switch smooth_type
+//         "EMA" => length >= 2 and length <= 500 ? ta.ema(value, length) : value
+//         "SMA" => length >= 2 and length <= 500 ? ta.sma(value, length) : value
+//         "WMA" => length >= 2 and length <= 500 ? ta.wma(value, length) : value
+//         "HMA" => length >= 2 and length <= 500 ? ta.hma(value, length) : value
+//         "VWMA" => length >= 2 and length <= 500 ? ta.vwma(value, length) : value
+//         "DEMA" => length >= 2 and length <= 500 ? 2 * ta.ema(value, length) - ta.ema(ta.ema(value, length), length) : value
+//         "TEMA" => length >= 2 and length <= 500 ? 3 * (ta.ema(value, length) - ta.ema(ta.ema(value, length), length)) + ta.ema(ta.ema(ta.ema(value, length), length), length) : value
+//         => value
+
+// // -----------------------------------------------------------------------------------
+// // LOGIC: MARKET AND TIMEFRAME
+// // -----------------------------------------------------------------------------------
+
+// is_intraday = timeframe.period != "D" and timeframe.period != "W" and timeframe.period != "M"
+// intraday_multiplier = isIntraday ? minutes_per_day / timeframe_minutes : 1
+
+// // Day detection
+// var int dayStart = na
+// var bool isNewDay = false
+// if isCrypto
+//     dayStart := time("D", "UTC")
+//     isNewDay := ta.change(dayStart) != 0
+// else
+//     dayStart := time("D", syminfo.timezone)
+//     isNewDay := ta.change(dayStart) != 0
+
+// CurrentDayStart = time("D")
+// CurrentDayEnd = CurrentDayStart + 24 * 60 * 60 * 1000 - 1
+// PriorDayStart = CurrentDayStart - 24 * 60 * 60 * 1000
+// PriorDayEnd = CurrentDayStart - 1
+// isCurrentDay = not na(CurrentDayStart) and time >= CurrentDayStart
+
+// // -----------------------------------------------------------------------------------
+// // LOGIC: VWAP
+// // -----------------------------------------------------------------------------------
+
+// wtdTimestamp = getStartOfWeekTimestamp()
+// mtdTimestamp = getStartOfMonthTimestamp()
+// ytdTimestamp = getStartOfYearTimestamp()
+// oneDayAgo = getNthTradingDay(1)
+// twoDaysAgo = getNthTradingDay(2)
+// ytdLowTimestamp = isDaily ? getYTDLowTimestamp() : na
+// ytdHighTimestamp = isDaily ? getYTDHighTimestamp() : na
+// [ytdHigh, ytdHighBar] = getYTDHigh()
+
+// dailyVWAP = vwapSince("D")
+// weeklyVWAP = vwapSince("W")
+// monthlyVWAP = vwapSince("M")
+// yearlyVWAP = vwapYTD()
+// wtdVWAP = vwapSinceCustomDate(wtdTimestamp)
+// mtdVWAP = vwapSinceCustomDate(mtdTimestamp)
+// ytdVWAP = vwapSinceCustomDate(ytdTimestamp)
+// oneDayVWAP_value = vwapSinceCustomDate(oneDayAgo)
+// twoDayVWAP_value = vwapSinceCustomDate(twoDaysAgo)
+// ytdLowVWAP = isDaily and showYTDLow ? vwapSinceCustomDate(ytdLowTimestamp) : na
+// ytdHighVWAP = isDaily and showYTDHigh ? vwapSinceCustomDate(ytdHighTimestamp) : na
+// vwapFromYTDHigh = avwap(ytdHighBar, dataSrc)
+
+// isOneDayAgo = time >= oneDayAgo and time[1] < oneDayAgo
+// isTwoDaysAgo = time >= twoDaysAgo and time[1] < twoDaysAgo
+// isWTDStart = time >= wtdTimestamp and time[1] < wtdTimestamp
+// isMTDStart = time >= mtdTimestamp and time[1] < mtdTimestamp
+// isYTDStart = time >= ytdTimestamp and time[1] < ytdTimestamp
+// customDateBarIndexforLow = getBarIndexForTimestamp(ytdLowTimestamp)
+// customDateBarIndexforHigh = getBarIndexForTimestamp(ytdHighTimestamp)
+
+// // -----------------------------------------------------------------------------------
+// // LOGIC: 5DMA
+// // -----------------------------------------------------------------------------------
+
+// true_5dma_period = get_5dma_period()
+// ma5 = ta.sma(close, int(true_5dma_period))
+// ma_trend_up = ma5 > ma5[1]
+// ma_trend_down = ma5 < ma5[1]
+// is_indecision = (ma_trend_up and close < ma5) or (ma_trend_down and close > ma5)
+// ma_line_color = colorByDirection ? ma_trend_up and close >= ma5 ? upColor : ma_trend_down and close <= ma5 ? downColor : indecisionColor : maColor
+
+// // 5DMA Vertical Line
+// fiveDaysAgo = isCrypto or isFutures ? getNthDayAgo(5) : getNthTradingDay(5)
+// isFiveDaysAgo = time >= fiveDaysAgo and time[1] < fiveDaysAgo
+// fiveDaysAgoBarIndex = getBarIndexForTimestamp(fiveDaysAgo)
+// var line fiveDayMALine = na
+
+// // -----------------------------------------------------------------------------------
+// // LOGIC: DAILY MOVING AVERAGES
+// // -----------------------------------------------------------------------------------
+
+// ma1_intraday_period = math.min(5000, isIntraday ? math.round(ma1_length * intraday_multiplier) : ma1_length)
+// ma2_intraday_period = math.min(5000, isIntraday ? math.round(ma2_length * intraday_multiplier) : ma2_length)
+// ma3_intraday_period = math.min(5000, isIntraday ? math.round(ma3_length * intraday_multiplier) : ma3_length)
+// ma5_intraday_period = math.min(5000, isIntraday ? math.round(5 * intraday_multiplier) : 5)
+
+// ma1_daily = request.security(syminfo.tickerid, "D", ma1_type == "SMA" ? ta.sma(ma_source, ma1_length) : ta.ema(ma_source, ma1_length), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+// ma2_daily = request.security(syminfo.tickerid, "D", ma2_type == "SMA" ? ta.sma(ma_source, ma2_length) : ta.ema(ma_source, ma2_length), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+// ma3_daily = request.security(syminfo.tickerid, "D", ma3_type == "SMA" ? ta.sma(ma_source, ma3_length) : ta.ema(ma_source, ma3_length), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+// ma5_daily = request.security(syminfo.tickerid, "D", ta.sma(ma_source, 5), lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+
+// smooth_intensity_ma1 = 25
+// smooth_intensity_ma2 = 25
+// smooth_intensity_ma3 = 25
+// smooth_length_ma1 = calculate_smoothing_length(ma1_length, smooth_intensity_ma1)
+// smooth_length_ma2 = calculate_smoothing_length(ma2_length, smooth_intensity_ma2)
+// smooth_length_ma3 = calculate_smoothing_length(ma3_length, smooth_intensity_ma3)
+
+// ma1_smoothed = auto_smooth and isIntraday ? safe_smooth(ma1_daily, smooth_length_ma1, smooth_type) : ma1_daily
+// ma2_smoothed = auto_smooth and isIntraday ? safe_smooth(ma2_daily, smooth_length_ma2, smooth_type) : ma2_daily
+// ma3_smoothed = auto_smooth and isIntraday ? safe_smooth(ma3_daily, smooth_length_ma3, smooth_type) : ma3_daily
+// period_too_large = ma1_intraday_period > 5000 or ma2_intraday_period > 5000 or ma3_intraday_period > 5000
+
+// // Daily MA Vertical Lines
+// var line ma1StartLine = na
+// var line ma2StartLine = na
+// var line ma3StartLine = na
+// ma1StartTimestamp = isCrypto or isFutures ? getNthDayAgo(ma1_length) : getNthTradingDay(ma1_length)
+// ma2StartTimestamp = isCrypto or isFutures ? getNthDayAgo(ma2_length) : getNthTradingDay(ma2_length)
+// ma3StartTimestamp = isCrypto or isFutures ? getNthDayAgo(ma3_length) : getNthTradingDay(ma3_length)
+// isMA1Start = time >= ma1StartTimestamp and time[1] < ma1StartTimestamp and dailyMA1 and not isIntraday
+// isMA2Start = time >= ma2StartTimestamp and time[1] < ma2StartTimestamp and dailyMA2 and not isIntraday
+// isMA3Start = time >= ma3StartTimestamp and time[1] < ma3StartTimestamp and dailyMA3 and not isIntraday
+// ma1StartBarIndex = getBarIndexForTimestamp(ma1StartTimestamp)
+// ma2StartBarIndex = getBarIndexForTimestamp(ma2StartTimestamp)
+// ma3StartBarIndex = getBarIndexForTimestamp(ma3StartTimestamp)
+
+// // -----------------------------------------------------------------------------------
+// // LOGIC: DAILY HIGHS & LOWS
+// // -----------------------------------------------------------------------------------
+
+// var float PriorHigh = na
+// var float PriorLow = na
+// var float CurrHigh = na
+// var float CurrLow = na
+// if isNewDay
+//     if not na(CurrHigh) and not na(CurrLow)
+//         PriorHigh := CurrHigh
+//         PriorLow := CurrLow
+//     CurrHigh := high
+//     CurrLow := low
+// else
+//     CurrHigh := na(CurrHigh) ? high : math.max(CurrHigh, high)
+//     CurrLow := na(CurrLow) ? low : math.min(CurrLow, low)
+
+// var line priorHighLine = na
+// var line priorLowLine = na
+// var line currHighLine = na
+// var line currLowLine = na
+// var label priorHighLbl = na
+// var label priorLowLbl = na
+// var label currHighLbl = na
+// var label currLowLbl = na
+// var box priorBox = na
+// var box currBox = na
+// highLabelOffset = pixelsToPrice(25)
+// lowLabelOffset = pixelsToPrice(25)
+
+// // -----------------------------------------------------------------------------------
+// // LOGIC: PIVOT POINTS
+// // -----------------------------------------------------------------------------------
+
+// [prevHigh, prevLow, prevClose] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+// P = (prevHigh + prevLow + prevClose) / 3
+// R1 = (2 * P) - prevLow
+// R2 = P + (prevHigh - prevLow)
+// R3 = prevHigh + (2 * (P - prevLow))
+// S1 = (2 * P) - prevHigh
+// S2 = P - (prevHigh - prevLow)
+// S3 = prevLow - (2 * (prevHigh - P))
+// isLowTimeframe = timeframe.multiplier <= 15 and timeframe.period == "m"
+// pivotSpacing = isLowTimeframe ? 0.0005 : 0.001
+// P_adj = P
+// R1_adj = isLowTimeframe ? R1 + pivotSpacing : R1
+// R2_adj = isLowTimeframe ? R2 + pivotSpacing * 2 : R2
+// R3_adj = isLowTimeframe ? R3 + pivotSpacing * 3 : R3
+// S1_adj = isLowTimeframe ? S1 - pivotSpacing : S1
+// S2_adj = isLowTimeframe ? S2 - pivotSpacing * 2 : S2
+// S3_adj = isLowTimeframe ? S3 - pivotSpacing * 3 : S3
+// showPivot = numPivots >= 1
+// showR1 = numPivots >= 1
+// showS1 = numPivots >= 1
+// showR2 = numPivots >= 2
+// showS2 = numPivots >= 2
+// showR3 = numPivots >= 3
+// showS3 = numPivots >= 3
+// var bool pivotLabelsCreated = false
+// var line p_line = na
+// var line r1_line = na
+// var line r2_line = na
+// var line r3_line = na
+// var line s1_line = na
+// var line s2_line = na
+// var line s3_line = na
+// var label p_label = na
+// var label r1_label = na
+// var label r2_label = na
+// var label r3_label = na
+// var label s1_label = na
+// var label s2_label = na
+// var label s3_label = na
+
+// // Calculate ATR and True Range
+// dailyATR = ta.atr(atrLength)
+// trueRange = ta.tr(handle_na=false)
+
+// // -----------------------------------------------------------------------------------
+// // PLOTTING: VWAP
+// // -----------------------------------------------------------------------------------
+
+// lWidth = i_showThinLines ? 1 : lineWidthAll
+// plot(showOneDay and not i_useCurrentVWAP and isIntraday ? dailyVWAP : na, "Daily VWAP", color=colorOneDay, linewidth=lWidth)
+// plot(showWTD and not i_useCurrentVWAP and isIntraday ? weeklyVWAP : na, "Weekly VWAP", color=colorWTD, linewidth=lWidth)
+// plot(showMTD and not i_useCurrentVWAP and isIntraday ? monthlyVWAP : na, "Monthly VWAP", color=colorMTD, linewidth=lWidth)
+// plot(showYTD and not i_useCurrentVWAP and not isIntraday ? yearlyVWAP : na, "YTD VWAP", color=colorYTD, linewidth=lWidth)
+// plot(showWTD and i_useCurrentVWAP and isIntraday ? wtdVWAP : na, "WTD AVWAP", color=colorWTD, linewidth=lWidth)
+// plot(showMTD and i_useCurrentVWAP and isIntraday ? mtdVWAP : na, "MTD AVWAP", color=colorMTD, linewidth=lWidth)
+// plot(showYTD and i_useCurrentVWAP and not isIntraday ? ytdVWAP : na, "YTD AVWAP", color=colorYTD, linewidth=lWidth)
+// plot(showTwoDay and isIntraday ? twoDayVWAP_value : na, "2 Day AVWAP", color=colorTwoDay, linewidth=lWidth)
+// plot(showOneDay and isIntraday ? oneDayVWAP_value : na, "1 Day AVWAP", color=colorOneDay, linewidth=lWidth)
+// plot(isDaily and showYTDLow ? ytdLowVWAP : na, "YTD Low AVWAP", color=colorYTDLow, linewidth=lWidth)
+// plot(isDaily and showYTDHigh ? ytdHighVWAP : na, "YTD High AVWAP", color=colorYTDHigh, linewidth=lWidth)
+
+// var line ytdHighLine = na
+// if not na(ytdHigh)
+//     if not na(ytdHighLine)
+//         line.delete(ytdHighLine)
+//     ytdHighLine := line.new(x1=ytdHighBar, y1=ytdHigh, x2=bar_index, y2=ytdHigh, color=color.red, width=2, extend=extend.right)
+
+// // VWAP Labels
+// plotshape(isTwoDaysAgo and showTwoDay and i_showLabels and isIntraday, title="2 Day VWAP Label", location=location.abovebar, style=shape.labeldown, text="2", color=colorTwoDay, textcolor=color.white, size=size.small)
+// plotshape(isOneDayAgo and showOneDay and i_showLabels and isIntraday, title="1 Day VWAP Label", location=location.abovebar, style=shape.labeldown, text="1", color=colorOneDay, textcolor=color.white, size=size.small)
+// if isWTDStart and showWTD and i_useCurrentVWAP and isIntraday
+//     label.new(i_showLabels ? bar_index : na, high, "WTD", style=label.style_label_up, color=colorWTD, textcolor=color.white, yloc=yloc.belowbar)
+// if isMTDStart and showMTD and i_useCurrentVWAP and isIntraday
+//     label.new(i_showLabels ? bar_index : na, high, "MTD", style=label.style_label_down, color=colorMTD, textcolor=color.white, yloc=yloc.abovebar)
+// if isYTDStart and showYTD and i_useCurrentVWAP
+//     label.new(i_showLabels ? bar_index : na, high, "YTD", style=label.style_label_up, color=colorYTD, textcolor=color.white, yloc=yloc.belowbar)
+
+// // VWAP Price Labels
+// if showAVWAPAfterLastBar and barstate.islast
+//     rightEdge = bar_index
+//     xOffset = 3
+//     var float priceOffset = close * 0.001
+//     var int labelCount = 0
+//     if showOneDay and isIntraday and not na(oneDayVWAP_value)
+//         label.new(rightEdge + xOffset, oneDayVWAP_value, str.tostring(oneDayVWAP_value, "#.##"), color=na, textcolor=colorOneDay, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+//     if showTwoDay and isIntraday and not na(twoDayVWAP_value)
+//         label.new(rightEdge + xOffset, twoDayVWAP_value, str.tostring(twoDayVWAP_value, "#.##"), color=na, textcolor=colorTwoDay, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+//     if showWTD and isIntraday and not na(wtdVWAP)
+//         label.new(rightEdge + xOffset, wtdVWAP, str.tostring(wtdVWAP, "#.##"), color=na, textcolor=colorWTD, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+//     if showMTD and isIntraday and not na(mtdVWAP)
+//         label.new(rightEdge + xOffset, mtdVWAP, str.tostring(mtdVWAP, "#.##"), color=na, textcolor=colorMTD, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+//     if showYTD and not na(ytdVWAP) and not isIntraday
+//         label.new(rightEdge + xOffset, ytdVWAP, str.tostring(ytdVWAP, "#.##"), color=na, textcolor=colorYTD, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+//     if showYTDHigh and isDaily and not na(ytdHighVWAP)
+//         label.new(rightEdge + xOffset, ytdHighVWAP, str.tostring(ytdHighVWAP, "#.##"), color=na, textcolor=colorYTDHigh, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+//     if showYTDLow and isDaily and not na(ytdLowVWAP)
+//         label.new(rightEdge + xOffset, ytdLowVWAP, str.tostring(ytdLowVWAP, "#.##"), color=na, textcolor=colorYTDLow, style=label.style_none, yloc=yloc.price, size=size.normal, textalign=text.align_left)
+
+// // -----------------------------------------------------------------------------------
+// // PLOTTING: 5DMA
+// // -----------------------------------------------------------------------------------
+
+// ma_plot = plot(showMA and isIntraday ? ma5 : na, color=ma_line_color, linewidth=lineWidthMA, title="True 5-Day MA")
+// ma_for_fill = showFill ? ma5 : na
+// price_plot = plot(close, color=color.new(color.white, 100), title="Price")
+// ma_fill_plot = plot(ma_for_fill, color=color.new(color.white, 100), title="MA for Fill")
+// var color fillColor = na
+// if showFill
+//     if is_indecision and isIntraday
+//         fillColor := color.new(indecisionFillColor, 85)
+//     else if close > ma5 and isIntraday
+//         fillColor := color.new(upColor, 85)
+//     else if isIntraday
+//         fillColor := color.new(downColor, 85)
+//     else
+//         fillColor := na
+// else
+//     fillColor := na
+// fill(price_plot, ma_fill_plot, color=fillColor, title="Price vs 5MA Fill")
+
+// // 5DMA Vertical Line
+// if show_intraday5DMA and isIntraday and isFiveDaysAgo and not na(fiveDaysAgoBarIndex)
+//     if not na(fiveDayMALine)
+//         line.delete(fiveDayMALine)
+//     lineStyleVal = verticalLineStyle == "Solid" ? line.style_solid : line.style_dashed
+//     fiveDayMALine := line.new( x1=fiveDaysAgoBarIndex, y1=low, x2=fiveDaysAgoBarIndex, y2=high,xloc=xloc.bar_index, color=maColor, style=lineStyleVal, width=verticalLineWidth)
+//     line.set_extend(fiveDayMALine, extend.both)
+
+// // -----------------------------------------------------------------------------------
+// // PLOTTING: DAILY MOVING AVERAGES
+// // -----------------------------------------------------------------------------------
+
+// plot(ma1_show and not isIntraday ? ma1_daily : na, "MA1", color=ma1_color, linewidth=line_width)
+// plot(ma2_show and not isIntraday ? ma2_daily : na, "MA2", color=ma2_color, linewidth=line_width)
+// plot(ma3_show and not isIntraday ? ma3_daily : na, "MA3", color=ma3_color, linewidth=line_width)
+// plot(ma1_show and show_ma1_intraday and isIntraday and not period_too_large ? ma1_smoothed : na, "MA1 Intraday", color=ma1_color, linewidth=line_width)
+// plot(ma2_show and show_ma2_intraday and isIntraday and not period_too_large ? ma2_smoothed : na, "MA2 Intraday", color=ma2_color, linewidth=line_width)
+// plot(ma3_show and show_ma3_intraday and isIntraday and not period_too_large ? ma3_smoothed : na, "MA3 Intraday", color=ma3_color, linewidth=line_width)
+
+// // Daily MA Vertical Lines
+// lineStyleVal = verticalLineStyle == "Solid" ? line.style_solid : line.style_dashed
+// if isMA1Start and not na(ma1StartBarIndex) and dailyMA1 and not isIntraday
+//     if not na(ma1StartLine)
+//         line.delete(ma1StartLine)
+//     ma1StartLine := line.new(x1=ma1StartBarIndex, y1=low, x2=ma1StartBarIndex, y2=high, xloc=xloc.bar_index, color=ma1_color, style=lineStyleVal, width=verticalLineWidth)
+//     line.set_extend(ma1StartLine, extend.both)
+// if isMA2Start and not na(ma2StartBarIndex) and dailyMA2 and not isIntraday
+//     if not na(ma2StartLine)
+//         line.delete(ma2StartLine)
+//     ma2StartLine := line.new(x1=ma2StartBarIndex, y1=low, x2=ma2StartBarIndex, y2=high, xloc=xloc.bar_index, color=ma2_color, style=lineStyleVal, width=verticalLineWidth)
+//     line.set_extend(ma2StartLine, extend.both)
+// if isMA3Start and not na(ma3StartBarIndex) and dailyMA3 and not isIntraday
+//     if not na(ma3StartLine)
+//         line.delete(ma3StartLine)
+//     ma3StartLine := line.new(x1=ma3StartBarIndex, y1=low, x2=ma3StartBarIndex, y2=high, xloc=xloc.bar_index, color=ma3_color, style=lineStyleVal, width=verticalLineWidth)
+//     line.set_extend(ma3StartLine, extend.both)
+
+// // -----------------------------------------------------------------------------------
+// // PLOTTING: DAILY HIGHS & LOWS
+// // -----------------------------------------------------------------------------------
+
+// currLineStyleVal = currLineStyle == "Solid" ? line.style_solid : currLineStyle == "Dashed" ? line.style_dashed : line.style_dotted
+// priorLineStyleVal = priorLineStyle == "Solid" ? line.style_solid : priorLineStyle == "Dashed" ? line.style_dashed : line.style_dotted
+
+// if isNewDay
+//     line.delete(priorHighLine)
+//     line.delete(priorLowLine)
+//     label.delete(priorHighLbl)
+//     label.delete(priorLowLbl)
+//     line.delete(currHighLine)
+//     line.delete(currLowLine)
+//     label.delete(currHighLbl)
+//     label.delete(currLowLbl)
+//     currHighLine := na
+//     currLowLine := na
+//     currHighLbl := na
+//     currLowLbl := na
+
+// if showPriorHL and not na(PriorHigh) and not na(PriorLow) and not na(highLabelOffset) and not na(lowLabelOffset) and isIntraday
+//     priorHighLine := line.new(x1=PriorDayStart, y1=PriorHigh, x2=PriorDayEnd, y2=PriorHigh, xloc=xloc.bar_time, color=priorLineColor, width=1, style=priorLineStyleVal, extend=extend.none)
+//     priorLowLine := line.new(x1=PriorDayStart, y1=PriorLow, x2=PriorDayEnd, y2=PriorLow, xloc=xloc.bar_time, color=priorLineColor, width=1, style=priorLineStyleVal, extend=extend.none)
+//     if showLeftPrices
+//         priorHighLbl := label.new(x=PriorDayStart, y=PriorHigh + highLabelOffset, xloc=xloc.bar_time, style=label.style_label_center, text=str.tostring(PriorHigh, format.mintick), color=na, textcolor=#A9A9A9, size=size.normal, yloc=yloc.price)
+//         priorLowLbl := label.new(x=PriorDayStart, y=PriorLow - lowLabelOffset, xloc=xloc.bar_time, style=label.style_label_center, text=str.tostring(PriorLow, format.mintick), color=na, textcolor=#A9A9A9, size=size.normal, yloc=yloc.price)
+
+// if showPriorHL and extendPriorLine and isIntraday
+//     if not na(priorHighLine)
+//         line.set_x2(priorHighLine, time)
+//         line.set_y1(priorHighLine, PriorHigh)
+//         line.set_y2(priorHighLine, PriorHigh)
+//     if not na(priorLowLine)
+//         line.set_x2(priorLowLine, time)
+//         line.set_y1(priorLowLine, PriorLow)
+//         line.set_y2(priorLowLine, PriorLow)
+// else if showPriorHL and not extendPriorLine and isIntraday
+//     if not na(priorHighLine)
+//         line.set_x1(priorHighLine, PriorDayStart)
+//         line.set_x2(priorHighLine, PriorDayEnd)
+//     if not na(priorLowLine)
+//         line.set_x1(priorLowLine, PriorDayStart)
+//         line.set_x2(priorLowLine, PriorDayEnd)
+
+// if showCurrentHL and not na(CurrHigh) and not na(CurrLow) and not na(highLabelOffset) and not na(lowLabelOffset) and isIntraday
+//     if na(currHighLine)
+//         currHighLine := line.new(x1=CurrentDayStart, y1=CurrHigh, x2=time, y2=CurrHigh, xloc=xloc.bar_time, color=currLineColor, width=1, style=currLineStyleVal, extend=extend.none)
+//     else
+//         line.set_x2(currHighLine, time)
+//         line.set_y1(currHighLine, CurrHigh)
+//         line.set_y2(currHighLine, CurrHigh)
+//     if na(currLowLine)
+//         currLowLine := line.new(x1=CurrentDayStart, y1=CurrLow, x2=time, y2=CurrLow, xloc=xloc.bar_time, color=currLineColor, width=1, style=currLineStyleVal, extend=extend.none)
+//     else
+//         line.set_x2(currLowLine, time)
+//         line.set_y1(currLowLine, CurrLow)
+//         line.set_y2(currLowLine, CurrLow)
+//     if showLeftPrices
+//         if na(currHighLbl)
+//             currHighLbl := label.new(x=CurrentDayStart, y=CurrHigh + highLabelOffset, xloc=xloc.bar_time, style=label.style_label_center, text=str.tostring(CurrHigh, format.mintick), color=na, textcolor=#A9A9A9, size=size.normal, yloc=yloc.price)
+//         else
+//             label.set_y(currHighLbl, CurrHigh + highLabelOffset)
+//             label.set_text(currHighLbl, str.tostring(CurrHigh, format.mintick))
+//             label.set_x(currHighLbl, CurrentDayStart)
+//         if na(currLowLbl)
+//             currLowLbl := label.new(x=CurrentDayStart, y=CurrLow - lowLabelOffset, xloc=xloc.bar_time, style=label.style_label_center, text=str.tostring(CurrLow, format.mintick), color=na, textcolor=#A9A9A9, size=size.normal, yloc=yloc.price)
+//         else
+//             label.set_y(currLowLbl, CurrLow - lowLabelOffset)
+//             label.set_text(currLowLbl, str.tostring(CurrLow, format.mintick))
+//             label.set_x(currLowLbl, CurrentDayStart)
+
+// if showPriorBox and not na(PriorHigh) and not na(PriorLow) and isIntraday
+//     if na(priorBox)
+//         priorBox := box.new(left=PriorDayStart, right=extendPriorBox ? time : PriorDayEnd, top=PriorHigh, bottom=PriorLow, xloc=xloc.bar_time, border_color=color.new(priorBoxColor, 100), bgcolor=color.new(priorBoxColor, 85))
+//     else
+//         box.set_right(priorBox, extendPriorBox ? time : PriorDayEnd)
+//         box.set_top(priorBox, PriorHigh)
+//         box.set_bottom(priorBox, PriorLow)
+//         box.set_left(priorBox, PriorDayStart)
+// else
+//     if not na(priorBox)
+//         box.delete(priorBox)
+//         priorBox := na
+
+// if showCurrBox and not na(CurrHigh) and not na(CurrLow) and isIntraday
+//     if na(currBox)
+//         currBox := box.new(left=CurrentDayStart, right=time, top=CurrHigh, bottom=CurrLow, xloc=xloc.bar_time, border_color=color.new(currBoxColor, 100), bgcolor=color.new(currBoxColor, 85))
+//     else
+//         box.set_right(currBox, time)
+//         box.set_top(currBox, CurrHigh)
+//         box.set_bottom(currBox, CurrLow)
+//         box.set_left(currBox, CurrentDayStart)
+// else
+//     if not na(currBox)
+//         box.delete(currBox)
+//         currBox := na
+
+// // -----------------------------------------------------------------------------------
+// // PLOTTING: PIVOT POINTS
+// // -----------------------------------------------------------------------------------
+
+// pivotLineStyleVal = pivotLineStyle == "Solid" ? line.style_solid : line.style_dashed
+// if showPivots and showPivot and isCurrentDay and isIntraday
+//     line.delete(p_line[1])
+//     p_line := line.new(CurrentDayStart, P_adj, time, P_adj, xloc=xloc.bar_time, color=colorPivot, style=line.style_solid, width=2)
+// if showPivots and isCurrentDay and isIntraday
+//     if showR1
+//         line.delete(r1_line[1])
+//         r1_line := line.new(CurrentDayStart, R1_adj, time, R1_adj, xloc=xloc.bar_time, color=colorResistance, style=pivotLineStyleVal, width=pivotLineWidth)
+//     if showR2
+//         line.delete(r2_line[1])
+//         r2_line := line.new(CurrentDayStart, R2_adj, time, R2_adj, xloc=xloc.bar_time, color=colorResistance, style=pivotLineStyleVal, width=pivotLineWidth)
+//     if showR3
+//         line.delete(r3_line[1])
+//         r3_line := line.new(CurrentDayStart, R3_adj, time, R3_adj, xloc=xloc.bar_time, color=colorResistance, style=pivotLineStyleVal, width=pivotLineWidth)
+//     if showS1
+//         line.delete(s1_line[1])
+//         s1_line := line.new(CurrentDayStart, S1_adj, time, S1_adj, xloc=xloc.bar_time, color=colorSupport, style=pivotLineStyleVal, width=pivotLineWidth)
+//     if showS2
+//         line.delete(s2_line[1])
+//         s2_line := line.new(CurrentDayStart, S2_adj, time, S2_adj, xloc=xloc.bar_time, color=colorSupport, style=pivotLineStyleVal, width=pivotLineWidth)
+//     if showS3
+//         line.delete(s3_line[1])
+//         s3_line := line.new(CurrentDayStart, S3_adj, time, S3_adj, xloc=xloc.bar_time, color=colorSupport, style=pivotLineStyleVal, width=pivotLineWidth)
+
+// if isNewDay
+//     pivotLabelsCreated := false
+//     label.delete(p_label[1])
+//     label.delete(r1_label[1])
+//     label.delete(r2_label[1])
+//     label.delete(r3_label[1])
+//     label.delete(s1_label[1])
+//     label.delete(s2_label[1])
+//     label.delete(s3_label[1])
+
+// if showPivots and showPivotLabels and isCurrentDay and not pivotLabelsCreated and isIntraday
+//     rightEdgePosition = bar_index + 1
+//     labelOffset = isLowTimeframe ? 0.0003 : 0.0005
+//     if showPivot
+//         p_label := label.new(rightEdgePosition, P_adj, "P: " + str.tostring(P, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     if showR1
+//         r1_label := label.new(rightEdgePosition, R1_adj + labelOffset, "R1: " + str.tostring(R1, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     if showR2
+//         r2_label := label.new(rightEdgePosition, R2_adj + labelOffset * 2, "R2: " + str.tostring(R2, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     if showR3
+//         r3_label := label.new(rightEdgePosition, R3_adj + labelOffset * 3, "R3: " + str.tostring(R3, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     if showS1
+//         s1_label := label.new(rightEdgePosition, S1_adj - labelOffset, "S1: " + str.tostring(S1, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     if showS2
+//         s2_label := label.new(rightEdgePosition, S2_adj - labelOffset * 2, "S2: " + str.tostring(S2, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     if showS3
+//         s3_label := label.new(rightEdgePosition, S3_adj - labelOffset * 3, "S3: " + str.tostring(S3, "#.##"), xloc=xloc.bar_index, textcolor=#a9a9a9, style=label.style_label_left, size=size.normal, textalign=text.align_left, color=color.new(color.white, 100))
+//     pivotLabelsCreated := true
+
+// if pivotLabelsCreated
+//     rightEdgePosition = bar_index + 1
+//     if not na(p_label)
+//         label.set_x(p_label, rightEdgePosition)
+//     if not na(r1_label)
+//         label.set_x(r1_label, rightEdgePosition)
+//     if not na(r2_label)
+//         label.set_x(r2_label, rightEdgePosition)
+//     if not na(r3_label)
+//         label.set_x(r3_label, rightEdgePosition)
+//     if not na(s1_label)
+//         label.set_x(s1_label, rightEdgePosition)
+//     if not na(s2_label)
+//         label.set_x(s2_label, rightEdgePosition)
+//     if not na(s3_label)
+//         label.set_x(s3_label, rightEdgePosition)
+
+// // -----------------------------------------------------------------------------------
+// // PLOTTING: STATS TABLES
+// // -----------------------------------------------------------------------------------
+
+
+// // Create Stats Table
+// var table statsTable = na
+// if barstate.islast and is_intraday
+//     // Determine table position
+//     tablePos = tableLocation == "top_left" ? position.top_left :tableLocation == "middle_left" ? position.middle_left :tableLocation == "bottom_left" ? position.bottom_left :tableLocation == "top_center" ? position.top_center :tableLocation == "center" ? position.middle_center :tableLocation == "bottom_center" ? position.bottom_center :tableLocation == "top_right" ? position.top_right :tableLocation == "middle_right" ? position.middle_right :position.bottom_right
+    
+//     // Initialize table with dynamic columns (3 for ATR-only, 4 for mixed)
+//     rowCount = 0
+//     rowCount := rowCount + 1  // Header row
+//     rowCount := rowCount + (showAVWAP ? 5 : 0)  // 1-Day, 2-Day, WTD, MTD, 5-Day
+//     rowCount := rowCount + (show5DMA ? 1 : 0)   // 5-Day Moving Average
+//     rowCount := rowCount + (showDayHL ? 2 : 0)   // Day High and Day Low
+//     rowCount := rowCount + (showPriorHLTable ? 2 : 0)  // Prior Day High and Prior Day Low
+//     rowCount := rowCount + (showPivotsTable ? numPivots * 2 + 1 : 0)  // Pivot points (Pivot, R1-R3, S1-S3)
+//     rowCount := rowCount + (showDailyATR ? 1 : 0)  // ATR and True Range
+    
+//     if rowCount > 1
+//         statsTable := table.new(position=tablePos, columns=showDailyATR and not (showAVWAP or showDayHL or showPriorHLTable or show5DMA or showPivotsTable) ? 3 : 4, rows=rowCount, bgcolor=color.black, border_color=color.gray, border_width=1)
+        
+
+//          // Get text size from input
+//         text_size = getTextSize(textSize)
+//         // Populate table
+//         rowIdx = 0
+        
+//         // Header row
+//         if showDailyATR and not (showAVWAP or showDayHL or showPriorHLTable or show5DMA or showPivotsTable)
+//             table.cell(statsTable, 0, rowIdx, "", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "20-Day Average", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, "True Range", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//         else
+//             table.cell(statsTable, 0, rowIdx, "---", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "Price", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, "To", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, "From", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//         rowIdx := rowIdx + 1
+        
+//         if showAVWAP
+//             // 1-Day AVWAP
+//             table.cell(statsTable, 0, rowIdx, "1-Day", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(nz(oneDayVWAP_value, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((nz(oneDayVWAP_value, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - nz(oneDayVWAP_value, close - close)) / nz(oneDayVWAP_value, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             if matchAVWAPColor
+//                 table.cell(statsTable, 0, rowIdx, "1-Day", bgcolor=colorOneDay, text_color=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+            
+//             // 2-Day AVWAP
+//             table.cell(statsTable, 0, rowIdx, "2-Day", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(nz(twoDayVWAP_value, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((nz(twoDayVWAP_value, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - nz(twoDayVWAP_value, close)) / nz(twoDayVWAP_value, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             if matchAVWAPColor
+//                 table.cell(statsTable, 0, rowIdx, "2-Day", bgcolor=colorTwoDay, text_color=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+            
+//             // WTD AVWAP
+//             table.cell(statsTable, 0, rowIdx, "WTD", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(nz(wtdVWAP, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - nz(wtdVWAP, close)) / nz(wtdVWAP, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((nz(wtdVWAP, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             if matchAVWAPColor
+//                 table.cell(statsTable, 0, rowIdx, "WTD", bgcolor=colorWTD, text_color=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+            
+//             // MTD AVWAP
+//             table.cell(statsTable, 0, rowIdx, "MTD", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(nz(mtdVWAP, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - nz(mtdVWAP, close)) / nz(mtdVWAP, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((nz(mtdVWAP, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             if matchAVWAPColor
+//                 table.cell(statsTable, 0, rowIdx, "MTD", bgcolor=colorMTD, text_color=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+        
+//         if show5DMA
+//             // 5-Day Moving Average
+//             table.cell(statsTable, 0, rowIdx, "5-Day", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(ma5), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - ma5) / ma5 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((ma5 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             if matchAVWAPColor
+//                 table.cell(statsTable, 0, rowIdx, "5-Day", bgcolor=color.orange, text_color=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+        
+//         if showDayHL
+//             // Day High
+//             table.cell(statsTable, 0, rowIdx, "Day High", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(CurrHigh), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - CurrHigh) / CurrHigh * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((CurrHigh - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+            
+//             // Day Low
+//             table.cell(statsTable, 0, rowIdx, "Day Low", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(CurrLow), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - CurrLow) / CurrLow * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((CurrLow - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+        
+//         if showPriorHLTable
+//             // Prior Day High
+//             table.cell(statsTable, 0, rowIdx, "Prior Day High", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(PriorHigh), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - PriorHigh) / PriorHigh * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((PriorHigh - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+            
+//             // Prior Day Low
+//             table.cell(statsTable, 0, rowIdx, "Prior Day Low", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(PriorLow), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - PriorLow) / PriorLow * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((PriorLow - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+        
+//         // Add Pivot Points to the table
+//         if showPivotsTable
+//             // Resistance 3
+//             if numPivots >= 3
+//                 table.cell(statsTable, 0, rowIdx, "R3", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(R3), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 3, rowIdx, str.tostring((close - R3) / R3 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, str.tostring((R3 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 rowIdx := rowIdx + 1
+            
+//             // Resistance 2
+//             if numPivots >= 2
+//                 table.cell(statsTable, 0, rowIdx, "R2", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(R2), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 3, rowIdx, str.tostring((close - R2) / R2 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, str.tostring((R2 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 rowIdx := rowIdx + 1
+            
+//             // Resistance 1
+//             if numPivots >= 1
+//                 table.cell(statsTable, 0, rowIdx, "R1", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(R1), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 3, rowIdx, str.tostring((close - R1) / R1 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, str.tostring((R1 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 rowIdx := rowIdx + 1
+            
+//             // Pivot Point
+//             table.cell(statsTable, 0, rowIdx, "Pivot", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//             table.cell(statsTable, 1, rowIdx, "$" + formatPrice(P), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 3, rowIdx, str.tostring((close - P) / P * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             table.cell(statsTable, 2, rowIdx, str.tostring((P - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//             rowIdx := rowIdx + 1
+            
+//             // Support 1
+//             if numPivots >= 1
+//                 table.cell(statsTable, 0, rowIdx, "S1", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(S1), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 3, rowIdx, str.tostring((close - S1) / S1 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, str.tostring((S1 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 rowIdx := rowIdx + 1
+            
+//             // Support 2
+//             if numPivots >= 2
+//                 table.cell(statsTable, 0, rowIdx, "S2", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(S2), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 3, rowIdx, str.tostring((close - S2) / S2 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, str.tostring((S2 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 rowIdx := rowIdx + 1
+            
+//             // Support 3
+//             if numPivots >= 3
+//                 table.cell(statsTable, 0, rowIdx, "S3", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(S3), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 3, rowIdx, str.tostring((close - S3) / S3 * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, str.tostring((S3 - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 rowIdx := rowIdx + 1
+
+// // ... (keep all existing code below the stats table section) ...
+        
+//         if showDailyATR
+//             if showDailyATR and not (showAVWAP or showDayHL or showPriorHLTable or show5DMA or showPivotsTable)
+//                 // ATR-only mode (2 rows, 3 columns)
+//                 table.cell(statsTable, 0, rowIdx, "ATR", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size, text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(dailyATR) + " (" + str.tostring(dailyATR / close * 100, "#.##") + "%)", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.cell(statsTable, 2, rowIdx, "$" + formatPrice(trueRange) + " (" + str.tostring(trueRange / close * 100, "#.##") + "%)", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 // Conditional background for True Range
+//                 if trueRange >= dailyATR
+//                     table.cell(statsTable, 2, rowIdx, bgcolor=color.yellow, text_size=text_size)
+//                 if trueRange > dailyATR * 1.5  // 50%+ increase
+//                     table.cell(statsTable, 2, rowIdx, bgcolor=color.red, text_size=text_size)
+//             else
+//                 // ATR with other sections (4 columns, merged To/From)
+//                 table.cell(statsTable, 0, rowIdx, "ATR", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//                 table.cell(statsTable, 1, rowIdx, "$" + formatPrice(dailyATR) + " (" + str.tostring(dailyATR / close * 100, "#.##") + "%)", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 table.merge_cells(statsTable, 2, rowIdx, 3, rowIdx)
+//                 table.cell(statsTable, 2, rowIdx, "$" + formatPrice(trueRange) + " (" + str.tostring(trueRange / close * 100, "#.##") + "%)", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//                 // Conditional background for True Range (applied to merged cell)
+//                 if trueRange >= dailyATR
+//                     table.cell(statsTable, 2, rowIdx, "$" + formatPrice(trueRange) + " (" + str.tostring(trueRange / close * 100, "#.##") + "%)", bgcolor=color.yellow, text_color=color.black, text_size=text_size)
+//                 if trueRange > dailyATR * 1.5  // 50%+ increase
+//                     table.cell(statsTable, 2, rowIdx, "$" + formatPrice(trueRange) + " (" + str.tostring(trueRange / close * 100, "#.##") + "%)", bgcolor=color.red, text_color = color.black, text_size=text_size)
+//             rowIdx := rowIdx + 1
+
+// var table dailyStatsTable = na
+// if barstate.islast and not isIntraday and showAVWAPDaily
+//     // Determine table position
+//     tablePos = tableLocation == "top_left" ? position.top_left :tableLocation == "middle_left" ? position.middle_left :tableLocation == "bottom_left" ? position.bottom_left :tableLocation == "top_center" ? position.top_center :tableLocation == "center" ? position.middle_center :tableLocation == "bottom_center" ? position.bottom_center :tableLocation == "top_right" ? position.top_right :tableLocation == "middle_right" ? position.middle_right :position.bottom_right
+//     text_size = getTextSize(textSize)
+//     dailyStatsTable := table.new(position=tablePos, columns=4, rows=4, bgcolor=color.black, border_color=color.gray, border_width=1)
+//     // Header row
+//     table.cell(dailyStatsTable, 0, 0, "---", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//     table.cell(dailyStatsTable, 1, 0, "Price", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//     table.cell(dailyStatsTable, 2, 0, "To", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//     table.cell(dailyStatsTable, 3, 0, "From", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+    
+//     // YTD VWAP
+//     table.cell(dailyStatsTable, 0, 1, "YTD", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//     table.cell(dailyStatsTable, 1, 1, "$" + formatPrice(nz(ytdVWAP, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     table.cell(dailyStatsTable, 2, 1, str.tostring((nz(ytdVWAP, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     table.cell(dailyStatsTable, 3, 1, str.tostring((close - nz(ytdVWAP, close)) / nz(ytdVWAP, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     if matchAVWAPColor
+//         table.cell(dailyStatsTable, 0, 1, "YTD", bgcolor=colorYTD, text_color=color.white, text_size=text_size)
+    
+//     // YTD High VWAP
+//     table.cell(dailyStatsTable, 0, 2, "YTD High", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//     table.cell(dailyStatsTable, 1, 2, "$" + formatPrice(nz(ytdHighVWAP, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     table.cell(dailyStatsTable, 2, 2, str.tostring((nz(ytdHighVWAP, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     table.cell(dailyStatsTable, 3, 2, str.tostring((close - nz(ytdHighVWAP, close)) / nz(ytdHighVWAP, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     if matchAVWAPColor
+//         table.cell(dailyStatsTable, 0, 2, "YTD High", bgcolor=colorYTDHigh, text_color=color.white, text_size=text_size)
+    
+//     // YTD Low VWAP
+//     table.cell(dailyStatsTable, 0, 3, "YTD Low", text_color=color.white, bgcolor=color.rgb(0, 60, 109), text_size=text_size)
+//     table.cell(dailyStatsTable, 1, 3, "$" + formatPrice(nz(ytdLowVWAP, close)), text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     table.cell(dailyStatsTable, 2, 3, str.tostring((nz(ytdLowVWAP, close) - close) / close * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     table.cell(dailyStatsTable, 3, 3, str.tostring((close - nz(ytdLowVWAP, close)) / nz(ytdLowVWAP, close) * 100, "#.##") + "%", text_color=color.black, bgcolor=color.white, text_size=text_size)
+//     if matchAVWAPColor
+//         table.cell(dailyStatsTable, 0, 3, "YTD Low", bgcolor=colorYTDLow, text_color=color.white, text_size=text_size)
