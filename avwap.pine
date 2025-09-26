@@ -38,6 +38,8 @@ if barstate.islast and not holidaysInitialized and (isStock or isFutures)
     holidays := getMarketHolidays()
     holidaysInitialized := true
 
+isNewBar = ta.change(time) != 0
+
 // INPUTS: VWAP
 dataSrcInput = input.string(title="Source", options=["ohlc4", "open", "high", "low", "close", "hl2", "hlc3", "hlcc4"], defval="ohlc4", group="---AVWAP [ALL]---")
 dataSrc = switch dataSrcInput
@@ -693,6 +695,38 @@ plotshape(isOneDayAgo and showOneDay and i_showLabels and isIntraday, title="1 D
 
 
 // VWAP PRICE LABELS - Show price values on the right side of VWAP lines
+var label oneDayLabel = na
+var label twoDayLabel = na
+var label wtdLabel = na
+var label mtdLabel = na
+var label ytdLabel = na
+var label ytdHighLabel = na
+var label ytdLowLabel = na
+
+// Detect new bar to delete previous labels
+if isNewBar and showAVWAPAfterLastBar
+    // Delete previous labels on new bar
+    if not na(oneDayLabel)
+        label.delete(oneDayLabel)
+        oneDayLabel := na
+    if not na(twoDayLabel)
+        label.delete(twoDayLabel)
+        twoDayLabel := na
+    if not na(wtdLabel)
+        label.delete(wtdLabel)
+        wtdLabel := na
+    if not na(mtdLabel)
+        label.delete(mtdLabel)
+        mtdLabel := na
+    if not na(ytdLabel)
+        label.delete(ytdLabel)
+        ytdLabel := na
+    if not na(ytdHighLabel)
+        label.delete(ytdHighLabel)
+        ytdHighLabel := na
+    if not na(ytdLowLabel)
+        label.delete(ytdLowLabel)
+        ytdLowLabel := na
 if showAVWAPAfterLastBar and barstate.islast
     // Calculate offset position (right edge of chart with some padding)
     rightEdge = bar_index
@@ -705,43 +739,43 @@ if showAVWAPAfterLastBar and barstate.islast
     
     // 1-Day VWAP Label
     if showOneDay and isIntraday and not na(oneDayVWAP_value)
-        label.new(rightEdge + xOffset, oneDayVWAP_value, str.tostring(oneDayVWAP_value, "#.##"), 
+        oneDayLabel := label.new(rightEdge + xOffset, oneDayVWAP_value, str.tostring(oneDayVWAP_value, "#.##"), 
                  color=na, textcolor=colorOneDay, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
         
     // 2-Day VWAP Label
     if showTwoDay and isIntraday and not na(twoDayVWAP_value)
-        label.new(rightEdge + xOffset, twoDayVWAP_value, str.tostring(twoDayVWAP_value, "#.##"), 
+        twoDayLabel := label.new(rightEdge + xOffset, twoDayVWAP_value, str.tostring(twoDayVWAP_value, "#.##"), 
                  color=na, textcolor=colorTwoDay, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
     
     // WTD VWAP Label
     if showWTD and isIntraday and not na(wtdVWAP)
-        label.new(rightEdge + xOffset, wtdVWAP, str.tostring(wtdVWAP, "#.##"), 
+        wtdLabel := label.new(rightEdge + xOffset, wtdVWAP, str.tostring(wtdVWAP, "#.##"), 
                  color=na, textcolor=colorWTD, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
     
     // MTD VWAP Label
     if showMTD and isIntraday and not na(mtdVWAP)
-        label.new(rightEdge + xOffset, mtdVWAP, str.tostring(mtdVWAP, "#.##"), 
+        mtdLabel := label.new(rightEdge + xOffset, mtdVWAP, str.tostring(mtdVWAP, "#.##"), 
                  color=na, textcolor=colorMTD, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
     
     // YTD VWAP Label
     if showYTD and not na(ytdVWAP) and not isIntraday
-        label.new(rightEdge + xOffset, ytdVWAP, str.tostring(ytdVWAP, "#.##"), 
+        ytdLabel := label.new(rightEdge + xOffset, ytdVWAP, str.tostring(ytdVWAP, "#.##"), 
                  color=na, textcolor=colorYTD, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
     
     // YTD High VWAP Label
     if showYTDHigh and isDaily and not na(ytdHighVWAP)
-        label.new(rightEdge + xOffset, ytdHighVWAP, str.tostring(ytdHighVWAP, "#.##"), 
+        ytdHighLabel := label.new(rightEdge + xOffset, ytdHighVWAP, str.tostring(ytdHighVWAP, "#.##"), 
                  color=na, textcolor=colorYTDHigh, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
     
     // YTD Low VWAP Label
     if showYTDLow and isDaily and not na(ytdLowVWAP)
-        label.new(rightEdge + xOffset, ytdLowVWAP, str.tostring(ytdLowVWAP, "#.##"), 
+        ytdLowLabel := label.new(rightEdge + xOffset, ytdLowVWAP, str.tostring(ytdLowVWAP, "#.##"), 
                  color=na, textcolor=colorYTDLow, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
 
