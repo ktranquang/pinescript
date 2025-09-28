@@ -10,7 +10,7 @@ isCrypto = syminfo.type == "crypto" or syminfo.session == "24x7" or syminfo.sess
 isFutures = syminfo.type == "futures"
 isStock = not isCrypto and not isFutures
 isDaily = timeframe.isdaily
-isIntraday = timeframe.period != "D" and timeframe.period != "W" and timeframe.period != "M"
+isIntraday = not (str.endswith(timeframe.period, "D") or str.endswith(timeframe.period, "W") or str.endswith(timeframe.period, "M"))
 
 // // Initialize holidays array for traditional markets
 // var int[] holidays = array.new_int(0)
@@ -692,8 +692,6 @@ if isYTDStart and showYTD and i_useCurrentVWAP
 plotshape(isTwoDaysAgo and showTwoDay and i_showLabels and isIntraday, title="2 Day VWAP Label", location=location.abovebar, style=shape.labeldown, text="2", color=colorTwoDay, textcolor=color.white, size=size.small)
 plotshape(isOneDayAgo and showOneDay and i_showLabels and isIntraday, title="1 Day VWAP Label", location=location.abovebar, style=shape.labeldown, text="1", color=colorOneDay, textcolor=color.white, size=size.small)
 
-
-
 // VWAP PRICE LABELS - Show price values on the right side of VWAP lines
 var label oneDayLabel = na
 var label twoDayLabel = na
@@ -727,22 +725,18 @@ if isNewBar and showAVWAPAfterLastBar
     if not na(ytdLowLabel)
         label.delete(ytdLowLabel)
         ytdLowLabel := na
+
 if showAVWAPAfterLastBar and barstate.islast
     // Calculate offset position (right edge of chart with some padding)
     rightEdge = bar_index
     xOffset = 3  // Small offset to the right of the right edge
-
-// Define vertical offset (in price units) to avoid label overlap
-    var float priceOffset = close * 0.001  // Adjust this multiplier based on chart scale (e.g., 0.1% of price)
-    var int labelCount = 0  // Track the number of labels to calculate cumulative offset
-    
     
     // 1-Day VWAP Label
     if showOneDay and isIntraday and not na(oneDayVWAP_value)
         oneDayLabel := label.new(rightEdge + xOffset, oneDayVWAP_value, str.tostring(oneDayVWAP_value, "#.##"), 
                  color=na, textcolor=colorOneDay, style=label.style_none, 
                  yloc=yloc.price, size=size.normal, textalign=text.align_left)
-        
+
     // 2-Day VWAP Label
     if showTwoDay and isIntraday and not na(twoDayVWAP_value)
         twoDayLabel := label.new(rightEdge + xOffset, twoDayVWAP_value, str.tostring(twoDayVWAP_value, "#.##"), 
